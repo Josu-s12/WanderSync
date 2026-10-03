@@ -95,3 +95,26 @@ CREATE TABLE orders.saga_log (
   detail   TEXT,
   at       TIMESTAMPTZ DEFAULT now()
 );
+
+
+-- ---------- PERMISOS PARA LOS MICROSERVICIOS ----------
+-- Los microservicios se conectan como "postgres", que en Supabase NO es superusuario
+GRANT USAGE ON SCHEMA flights, hotels, cars, orders TO postgres;
+GRANT ALL ON ALL TABLES    IN SCHEMA flights, hotels, cars, orders TO postgres;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA flights, hotels, cars, orders TO postgres;
+
+-- ---------- DATOS SEMILLA (para probar antes de tener el scraping) ----------
+INSERT INTO flights.offers (source_id, origin, destination, airline, depart_at, price, seats) VALUES
+  ('seed-f1', 'Bogota',   'Cartagena',   'Avianca',  now() + interval '7 days',  420000, 5),
+  ('seed-f2', 'Bogota',   'Cartagena',   'LATAM',    now() + interval '7 days',  380000, 3),
+  ('seed-f3', 'Medellin', 'Santa Marta', 'Wingo',    now() + interval '10 days', 290000, 4);
+
+INSERT INTO hotels.offers (source_id, city, name, stars, price_per_night, rooms) VALUES
+  ('seed-h1', 'Cartagena',   'Hotel Caribe',       5, 650000, 2),
+  ('seed-h2', 'Cartagena',   'Casa Getsemani',     3, 210000, 4),
+  ('seed-h3', 'Santa Marta', 'Hotel Rodadero Mar', 4, 330000, 3);
+
+INSERT INTO cars.offers (source_id, city, model, category, price_per_day, units) VALUES
+  ('seed-c1', 'Cartagena',   'Kia Picanto',  'Economico', 120000, 3),
+  ('seed-c2', 'Cartagena',   'Mazda CX-30',  'SUV',       260000, 2),
+  ('seed-c3', 'Santa Marta', 'Renault Logan','Economico', 110000, 2);
