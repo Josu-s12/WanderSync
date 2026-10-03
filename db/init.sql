@@ -118,3 +118,17 @@ INSERT INTO cars.offers (source_id, city, model, category, price_per_day, units)
   ('seed-c1', 'Cartagena',   'Kia Picanto',  'Economico', 120000, 3),
   ('seed-c2', 'Cartagena',   'Mazda CX-30',  'SUV',       260000, 2),
   ('seed-c3', 'Santa Marta', 'Renault Logan','Economico', 110000, 2);
+
+  
+-- ---------- PASO 3: FACTURACIÓN Y TRAZABILIDAD DE LA SAGA ----------
+ALTER TABLE orders.saga_log ADD COLUMN booking_id UUID;
+
+CREATE TABLE orders.payments (
+  id         UUID PRIMARY KEY,
+  order_id   UUID NOT NULL REFERENCES orders.orders(id),
+  amount     NUMERIC(12,2) NOT NULL,
+  status     TEXT NOT NULL,          -- CAPTURED
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+GRANT ALL ON orders.payments TO postgres;

@@ -58,5 +58,25 @@ services:
       db:
         condition: service_healthy
 
+  orders:
+    build: ./services/orders
+    container_name: ws-orders
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/wandersync
+      FLIGHTS_URL: http://flights:8000
+      HOTELS_URL: http://hotels:8000
+      CARS_URL: http://cars:8000
+    ports:
+      - "8004:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      flights:
+        condition: service_started
+      hotels:
+        condition: service_started
+      cars:
+        condition: service_started
+
 volumes:
   pgdata:
