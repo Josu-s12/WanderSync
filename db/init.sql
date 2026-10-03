@@ -104,7 +104,7 @@ GRANT ALL ON ALL TABLES    IN SCHEMA flights, hotels, cars, orders TO postgres;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA flights, hotels, cars, orders TO postgres;
 
 -- ---------- DATOS SEMILLA (para probar antes de tener el scraping) ----------
-INSERT INTO flights.offers (source_id, origin, destination, airline, depart_at, price, seats) VALUES
+INSERT INTO flights.offers  (source_id, origin, destination, airline, depart_at, price, seats) VALUES
   ('seed-f1', 'Bogota',   'Cartagena',   'Avianca',  now() + interval '7 days',  420000, 5),
   ('seed-f2', 'Bogota',   'Cartagena',   'LATAM',    now() + interval '7 days',  380000, 3),
   ('seed-f3', 'Medellin', 'Santa Marta', 'Wingo',    now() + interval '10 days', 290000, 4);
