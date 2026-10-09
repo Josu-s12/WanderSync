@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 .venv/
 node_modules/
+# Archivo temporal de scripts/build_pdf.py
+docs/_documento_print.html

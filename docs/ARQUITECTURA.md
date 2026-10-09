@@ -1,6 +1,7 @@
 # Documento Técnico de Arquitectura — WanderSync Travel Solutions
 
 **Autor:** Josue Sarmiento
+**Repositorio:** https://github.com/Josu-s12/WanderSync
 **Asignatura:** Patrones Arquitectónicos Avanzados · **Evaluación:** Parcial práctico del segundo corte
 **Proyecto:** Plataforma de empaquetamiento turístico dinámico
 
@@ -18,7 +19,8 @@
 8. [Ciberseguridad por diseño](#8-ciberseguridad-por-diseño)
 9. [Despliegue](#9-despliegue)
 10. [Decisiones de arquitectura y justificación](#10-decisiones-de-arquitectura-y-justificación)
-11. [Trazabilidad con la rúbrica](#11-trazabilidad-con-la-rúbrica)
+11. [Evidencias de funcionamiento](#11-evidencias-de-funcionamiento)
+12. [Trazabilidad con la rúbrica](#12-trazabilidad-con-la-rúbrica)
 
 ---
 
@@ -37,49 +39,31 @@ problemas críticos:
 
 ```mermaid
 flowchart TB
-  subgraph Cliente
-    U([Navegador])
-  end
+  U(["Navegador"]) -->|"HTTP :3000"| FE["frontend · nginx<br/>SPA · proxy /graphql · CSP"]
+  FE -->|"/graphql"| GW["gateway · GraphQL<br/>sesiones · Argon2id · rate limiting"]
+  GW <-->|"sesiones y contadores"| R[("Redis")]
+  GW -->|"LECTURAS · pg_graphql<br/>rol gateway_reader"| DB[("Supabase Postgres + pg_graphql<br/>schemas flights · hotels · cars · orders")]
+  GW -->|"ESCRITURAS · bookPackage"| OR["orders<br/>ORQUESTADOR SAGA"]
+  OR -->|"reservar / compensar"| INV["flights · hotels · cars"]
+  INV --> DB
+  OR -->|"saga_log · payments"| DB
+  ING["ingestion<br/>flow de Prefect"] -->|"DaskTaskRunner"| DS["dask-scheduler"]
+  DS --> W["dask-worker ×2"]
+  W -->|"scraping HTTP"| MS["mock-source :8080<br/>portal a scrapear"]
+  W -->|"upsert · rol ingestion_writer"| DB
+  ING -.->|"estados y logs"| PS["prefect-server<br/>UI :4200"]
+  W -.-> PS
 
-  subgraph Borde["Borde (único punto publicado para el usuario)"]
-    FE["frontend · nginx<br/>SPA + proxy /graphql + CSP"]
-  end
-
-  subgraph Aplicación["Red interna de Docker (sin puertos publicados)"]
-    GW["gateway · GraphQL (Strawberry)<br/>sesiones · Argon2id · rate limiting"]
-    OR["orders · Órdenes y Facturación<br/>ORQUESTADOR SAGA"]
-    FL["flights"]
-    HO["hotels"]
-    CA["cars"]
-    R[("Redis<br/>sesiones · contadores")]
-    DB[("Supabase Postgres + pg_graphql<br/>schemas: flights · hotels · cars · orders")]
-  end
-
-  subgraph Ingesta["Ingesta distribuida y observabilidad"]
-    ING["ingestion · runner del flow de Prefect"]
-    DS["dask-scheduler"]
-    W1["dask-worker 1"]
-    W2["dask-worker 2"]
-    PS["prefect-server · UI :4200"]
-  end
-
-  MS["mock-source · portal de viajes a scrapear (:8080)"]
-
-  U -->|HTTP :3000| FE
-  FE -->|/graphql| GW
-  GW <--> R
-  GW -->|"LECTURAS: graphql.resolve() · rol gateway_reader"| DB
-  GW -->|"ESCRITURAS: bookPackage → POST /orders"| OR
-  OR -->|"reservar / compensar"| FL & HO & CA
-  FL & HO & CA & OR --> DB
-
-  ING -->|DaskTaskRunner| DS
-  DS --> W1 & W2
-  W1 & W2 -->|"scraping HTTP"| MS
-  W1 & W2 -->|"upsert · rol ingestion_writer"| DB
-  ING -. estados y logs .-> PS
-  W1 & W2 -. estados y logs .-> PS
+  classDef tx fill:#e6f4f1,stroke:#0f766e,color:#0b3b37
+  classDef data fill:#fff4e5,stroke:#b54708,color:#5c2a04
+  classDef ingest fill:#eef2ff,stroke:#4338ca,color:#1e1b4b
+  class FE,GW,OR,INV tx
+  class DB,R data
+  class ING,DS,W,PS,MS ingest
 ```
+
+*Verde: ruta transaccional (frontend → gateway → SAGA). Naranja: datos. Azul: ingesta distribuida y
+observabilidad. Solo el frontend, Prefect, el dashboard de Dask y la fuente mock publican puertos.*
 
 **Principios aplicados:**
 
@@ -125,16 +109,78 @@ erDiagram
   ORDERS_ORDERS  ||--o{ ORDERS_SAGA_LOG  : registra
   ORDERS_ORDERS  ||--o| ORDERS_PAYMENTS  : factura
 
-  FLIGHTS_OFFERS { int id PK  text source_id UK  text origin  text destination  text airline  timestamptz depart_at  numeric price  int seats }
-  HOTELS_OFFERS  { int id PK  text source_id UK  text city  text name  int stars  numeric price_per_night  int rooms }
-  CARS_OFFERS    { int id PK  text source_id UK  text city  text model  text category  numeric price_per_day  int units }
-  FLIGHTS_BOOKINGS { uuid id PK  uuid order_id  int offer_id FK  text status }
-  HOTELS_BOOKINGS  { uuid id PK  uuid order_id  int offer_id FK  text status }
-  CARS_BOOKINGS    { uuid id PK  uuid order_id  int offer_id FK  text status }
-  ORDERS_USERS     { int id PK  text email UK  text password_hash }
-  ORDERS_ORDERS    { uuid id PK  int user_id FK  text status  numeric total }
-  ORDERS_SAGA_LOG  { int id PK  uuid order_id FK  text step  text action  text result  text detail  uuid booking_id }
-  ORDERS_PAYMENTS  { uuid id PK  uuid order_id FK  numeric amount  text status }
+  FLIGHTS_OFFERS {
+    int id PK
+    text source_id UK
+    text origin
+    text destination
+    text airline
+    timestamptz depart_at
+    numeric price
+    int seats
+  }
+  HOTELS_OFFERS {
+    int id PK
+    text source_id UK
+    text city
+    text name
+    int stars
+    numeric price_per_night
+    int rooms
+  }
+  CARS_OFFERS {
+    int id PK
+    text source_id UK
+    text city
+    text model
+    text category
+    numeric price_per_day
+    int units
+  }
+  FLIGHTS_BOOKINGS {
+    uuid id PK
+    uuid order_id
+    int offer_id FK
+    text status
+  }
+  HOTELS_BOOKINGS {
+    uuid id PK
+    uuid order_id
+    int offer_id FK
+    text status
+  }
+  CARS_BOOKINGS {
+    uuid id PK
+    uuid order_id
+    int offer_id FK
+    text status
+  }
+  ORDERS_USERS {
+    int id PK
+    text email UK
+    text password_hash
+  }
+  ORDERS_ORDERS {
+    uuid id PK
+    int user_id FK
+    text status
+    numeric total
+  }
+  ORDERS_SAGA_LOG {
+    int id PK
+    uuid order_id FK
+    text step
+    text action
+    text result
+    text detail
+    uuid booking_id
+  }
+  ORDERS_PAYMENTS {
+    uuid id PK
+    uuid order_id FK
+    numeric amount
+    text status
+  }
 ```
 
 - `source_id` (único) permite que la ingesta haga **upsert**: si la fuente cambia un precio, se actualiza la fila
@@ -406,16 +452,29 @@ Un solo comando: `docker compose up -d --build` levanta **14 contenedores**.
 
 ```mermaid
 flowchart LR
-  subgraph host["Host (puertos publicados)"]
+  subgraph host["Host: puertos publicados"]
     P3000[":3000 frontend"]
     P4200[":4200 Prefect UI"]
     P8788[":8788 Dask dashboard"]
     P8080[":8080 mock-source"]
   end
-  subgraph net["Red interna wandersync_default"]
-    gateway & orders & flights & hotels & cars & db & redis & dask-scheduler & dask-worker & ingestion & prefect-server
+  subgraph net["Red interna de Docker: sin puertos publicados"]
+    GWN["gateway"]
+    ORN["orders"]
+    INV["flights · hotels · cars"]
+    DBN[("db · Supabase Postgres")]
+    RDN[("redis")]
+    DKN["dask-worker x2"]
+    INGN["ingestion"]
   end
-  P3000 --> gateway
+  P3000 -->|/graphql| GWN
+  GWN --> ORN --> INV --> DBN
+  GWN --> RDN
+  GWN --> DBN
+  P4200 -.- INGN
+  P8788 -.- DKN
+  DKN --> P8080
+  DKN --> DBN
 ```
 
 - El orden de arranque se controla con `depends_on` y `healthcheck` (`db`, `redis` y `prefect-server`).
@@ -440,7 +499,35 @@ flowchart LR
 | D10 | **Sesiones en Redis** (servidor) | JWT en el cliente | Permiten **invalidar y regenerar** el ID (requisito de Session Fixation) y cerrar sesión de verdad. Redis también sirve para el rate limiting |
 | D11 | **nginx como proxy del frontend** | CORS entre orígenes | Un único origen: la cookie `SameSite=Strict` funciona, no hace falta CORS, y nginx fija la IP real para el rate limiting |
 
-## 11. Trazabilidad con la rúbrica
+## 11. Evidencias de funcionamiento
+
+**Frontend: búsqueda de paquetes consolidados** (consulta `searchPackages` del gateway). La huella de sesión
+aparece arriba a la derecha.
+
+![Búsqueda de paquetes](img/01-frontend-busqueda.jpg)
+
+**SAGA, camino exitoso:** los 4 pasos ejecutados y la orden `CONFIRMED`.
+
+![SAGA happy path](img/02-saga-happy-path.jpg)
+
+**SAGA con fallo simulado en el auto:** compensación automática del hotel y del vuelo en orden inverso, y la orden
+queda `COMPENSATED`.
+
+![SAGA compensación](img/03-saga-compensacion.jpg)
+
+**Prefect: ejecución del flow `ingesta-turistica`** desde el deployment `ingesta-cada-10-min`. Se completaron 76 tareas.
+
+![Prefect flow run](img/04-prefect-flow-run.jpg)
+
+**Prefect: reintentos automáticos.** La fuente respondió 503 y Prefect programó el reintento 1/4 con backoff.
+
+![Prefect reintentos](img/06-prefect-reintentos.jpg)
+
+**Dask: *task stream*.** Las tareas se reparten entre los 2 workers (4 hilos) del clúster.
+
+![Dask task stream](img/05-dask-task-stream.jpg)
+
+## 12. Trazabilidad con la rúbrica
 
 | Criterio (peso) | Nivel Excelente exigido | Cómo se cumple |
 |---|---|---|

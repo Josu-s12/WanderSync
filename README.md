@@ -5,7 +5,7 @@ API Gateway **GraphQL**, patrón **SAGA**, ingesta distribuida con **Dask**, orq
 **Prefect**, y seguridad por diseño. Todo el ecosistema se despliega con **un solo comando**.
 
 > Parcial práctico del segundo corte — *Patrones Arquitectónicos Avanzados*.
-> **Autor:** Josue Sarmiento
+> **Autor:** Josue Sarmiento · **Repositorio:** https://github.com/Josu-s12/WanderSync
 
 | Documento | Contenido |
 |---|---|
@@ -58,7 +58,7 @@ flowchart LR
 ## Puesta en marcha
 
 ```bash
-git clone <url-del-repositorio>
+git clone https://github.com/Josu-s12/WanderSync.git
 cd WanderSync
 docker compose up -d --build
 ```
