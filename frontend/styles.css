@@ -1,0 +1,135 @@
+:root {
+  --bg: #f4f6f8;
+  --surface: #ffffff;
+  --text: #1c2430;
+  --muted: #667085;
+  --border: #e3e7ec;
+  --primary: #0f766e;
+  --primary-hover: #0b5e58;
+  --ok: #15803d;
+  --ok-bg: #e8f6ed;
+  --fail: #b42318;
+  --fail-bg: #fdecea;
+  --comp: #b54708;
+  --comp-bg: #fff4e5;
+  --radius: 12px;
+  --shadow: 0 1px 2px rgba(16, 24, 40, .06), 0 1px 3px rgba(16, 24, 40, .1);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); }
+h1 { font-size: 1.35rem; margin: 0 0 1rem; }
+h2 { font-size: 1.1rem; margin: 0; }
+code { font-family: ui-monospace, Consolas, monospace; }
+.muted { color: var(--muted); }
+
+/* ---------- Barra superior ---------- */
+.topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;
+  padding: .75rem 1.5rem; background: var(--surface); border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 5;
+}
+.brand { display: flex; align-items: center; gap: .6rem; }
+.brand small { display: block; color: var(--muted); font-size: .75rem; }
+.logo {
+  width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  background: var(--primary); color: #fff; font-size: 1.1rem;
+}
+.session { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; font-size: .85rem; }
+.fp { color: var(--muted); }
+.fp code { background: var(--bg); padding: .15rem .4rem; border-radius: 6px; color: var(--text); }
+.user-label { font-weight: 600; }
+
+/* ---------- Layout ---------- */
+main { max-width: 1100px; margin: 1.5rem auto; padding: 0 1rem; display: grid; gap: 1.25rem; }
+.panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 1.25rem; box-shadow: var(--shadow);
+}
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+
+/* ---------- Formularios ---------- */
+.search-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .9rem; align-items: end; }
+label { display: grid; gap: .3rem; font-size: .85rem; color: var(--muted); }
+input, select {
+  font: inherit; color: var(--text); padding: .55rem .65rem; border: 1px solid var(--border);
+  border-radius: 8px; background: #fff; min-width: 0;
+}
+input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+.demo-toggle { display: flex; align-items: center; gap: .5rem; font-size: .85rem; }
+
+/* ---------- Botones ---------- */
+.btn {
+  font: inherit; border-radius: 8px; padding: .55rem 1rem; cursor: pointer; border: 1px solid transparent;
+  font-weight: 600;
+}
+.btn:disabled { opacity: .6; cursor: progress; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover:not(:disabled) { background: var(--primary-hover); }
+.btn-ghost { background: transparent; border-color: var(--border); color: var(--text); }
+.btn-ghost:hover { background: var(--bg); }
+.btn-link { background: none; color: var(--primary); padding: .55rem 0; margin-right: auto; }
+
+/* ---------- Paquetes ---------- */
+.results { display: grid; gap: .9rem; }
+.package {
+  display: grid; grid-template-columns: repeat(3, 1fr) auto; gap: 1rem; align-items: center;
+  border: 1px solid var(--border); border-radius: 10px; padding: 1rem;
+}
+.package .item small { display: block; color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; }
+.package .item strong { display: block; }
+.package .item span { color: var(--muted); font-size: .85rem; }
+.package .total { text-align: right; display: grid; gap: .4rem; justify-items: end; }
+.package .total strong { font-size: 1.15rem; }
+.stars { color: #d97706; letter-spacing: 1px; }
+
+/* ---------- SAGA ---------- */
+.status { display: inline-block; padding: .2rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 700; }
+.status.CONFIRMED { background: var(--ok-bg); color: var(--ok); }
+.status.COMPENSATED, .status.COMPENSATION_PENDING { background: var(--comp-bg); color: var(--comp); }
+.status.PENDING { background: var(--bg); color: var(--muted); }
+.saga-summary { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
+.timeline li {
+  display: grid; grid-template-columns: 28px 90px 110px 1fr; gap: .75rem; align-items: center;
+  padding: .55rem .75rem; border-radius: 8px; font-size: .9rem;
+}
+.timeline li.ok { background: var(--ok-bg); }
+.timeline li.failed { background: var(--fail-bg); }
+.timeline li.compensate { background: var(--comp-bg); }
+.timeline .icon { font-weight: 700; text-align: center; }
+.timeline li.ok .icon { color: var(--ok); }
+.timeline li.failed .icon { color: var(--fail); }
+.timeline li.compensate .icon { color: var(--comp); }
+.timeline .detail { color: var(--muted); }
+
+/* ---------- Órdenes ---------- */
+.orders { width: 100%; border-collapse: collapse; font-size: .9rem; }
+.orders th, .orders td { text-align: left; padding: .6rem; border-bottom: 1px solid var(--border); }
+.orders th { color: var(--muted); font-weight: 600; font-size: .8rem; }
+.orders td code { font-size: .8rem; }
+
+/* ---------- Diálogo y avisos ---------- */
+dialog { border: none; border-radius: var(--radius); padding: 1.5rem; width: min(420px, calc(100% - 32px)); box-shadow: 0 20px 50px rgba(0,0,0,.25); }
+dialog::backdrop { background: rgba(16, 24, 40, .45); }
+dialog form { display: grid; gap: .9rem; }
+.dialog-actions { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.hint { margin: 0; font-size: .8rem; color: var(--muted); }
+.error { margin: 0; color: var(--fail); font-size: .85rem; min-height: 1em; }
+.toast {
+  position: fixed; bottom: 1.25rem; left: 50%; transform: translateX(-50%); max-width: calc(100% - 32px);
+  background: var(--text); color: #fff; padding: .7rem 1rem; border-radius: 8px; box-shadow: var(--shadow); z-index: 20;
+}
+.toast.error { background: var(--fail); }
+
+footer { text-align: center; color: var(--muted); font-size: .85rem; padding: 1rem 1rem 2.5rem; }
+footer a { color: var(--primary); }
+
+@media (max-width: 760px) {
+  .topbar { padding: .75rem 1rem; }
+  .package { grid-template-columns: 1fr; }
+  .package .total { justify-items: start; text-align: left; }
+  .timeline li { grid-template-columns: 24px 70px 1fr; }
+  .timeline .detail { grid-column: 2 / -1; }
+}

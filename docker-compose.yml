@@ -82,14 +82,21 @@ services:
       ENABLE_GRAPHIQL: "true"              # consola GraphiQL para la demo
       COOKIE_SECURE: "false"               # "true" cuando se sirva por HTTPS
       GLOBAL_RATE_LIMIT_PER_MINUTE: "120"
-    ports:
-      - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
       orders:
+        condition: service_started
+
+  frontend:
+    build: ./frontend
+    container_name: ws-frontend
+    ports:
+      - "3000:8080"      # http://localhost:3000  (el gateway solo es accesible a traves de aqui)
+    depends_on:
+      gateway:
         condition: service_started
 
   mock-source:

@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WanderSync · Paquetes turísticos</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">✈</span>
+      <div>
+        <strong>WanderSync</strong>
+        <small>Paquetes turísticos dinámicos</small>
+      </div>
+    </div>
+    <div class="session" id="session-box">
+      <span class="fp" title="Huella no reversible del ID de sesión (cambia al iniciar sesión)">
+        sesión <code id="fingerprint">…</code>
+      </span>
+      <span id="user-label" class="user-label"></span>
+      <button id="btn-open-auth" class="btn btn-ghost">Iniciar sesión</button>
+      <button id="btn-logout" class="btn btn-ghost" hidden>Cerrar sesión</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ================= Búsqueda ================= -->
+    <section class="panel search">
+      <h1>Arma tu viaje: vuelo + hotel + auto</h1>
+      <form id="search-form" class="search-grid">
+        <label>Origen
+          <select name="origin">
+            <option>Bogota</option><option>Medellin</option><option>Cali</option>
+          </select>
+        </label>
+        <label>Destino
+          <select name="destination">
+            <option>Cartagena</option><option>Santa Marta</option><option>San Andres</option>
+          </select>
+        </label>
+        <label>Noches de hotel
+          <input name="nights" type="number" min="1" max="30" value="3">
+        </label>
+        <label>Días de auto
+          <input name="days" type="number" min="1" max="30" value="3">
+        </label>
+        <label>Presupuesto máx. (COP)
+          <input name="maxBudget" type="number" min="0" step="50000" placeholder="Sin límite">
+        </label>
+        <button class="btn btn-primary" type="submit">Buscar paquetes</button>
+      </form>
+    </section>
+
+    <!-- ================= Resultados ================= -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Paquetes disponibles</h2>
+        <label class="demo-toggle" title="Solo para la demostración del patrón SAGA">
+          Simular fallo en
+          <select id="fail-at">
+            <option value="">Ninguno (happy path)</option>
+            <option value="FLIGHT">Vuelo</option>
+            <option value="HOTEL">Hotel</option>
+            <option value="CAR">Auto</option>
+            <option value="PAYMENT">Pago</option>
+          </select>
+        </label>
+      </div>
+      <div id="results" class="results"><p class="muted">Busca un destino para ver paquetes.</p></div>
+    </section>
+
+    <!-- ================= Resultado de la SAGA ================= -->
+    <section class="panel" id="saga-panel" hidden>
+      <h2>Resultado de la reserva</h2>
+      <div id="saga-result"></div>
+    </section>
+
+    <!-- ================= Mis reservas ================= -->
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Mis reservas</h2>
+        <button id="btn-refresh-orders" class="btn btn-ghost">Actualizar</button>
+      </div>
+      <div id="orders"><p class="muted">Inicia sesión para ver tus reservas.</p></div>
+    </section>
+  </main>
+
+  <footer>
+    <a href="/graphql" target="_blank" rel="noopener">GraphiQL</a> ·
+    <a href="http://localhost:4200" target="_blank" rel="noopener">Prefect UI</a> ·
+    <a href="http://localhost:8788/status" target="_blank" rel="noopener">Dask dashboard</a> ·
+    <a href="http://localhost:8080" target="_blank" rel="noopener">Fuente mock</a>
+  </footer>
+
+  <!-- ================= Modal de autenticación ================= -->
+  <dialog id="auth-dialog">
+    <form id="auth-form" method="dialog">
+      <h2 id="auth-title">Iniciar sesión</h2>
+      <label>Correo <input name="email" type="email" required autocomplete="username"></label>
+      <label>Contraseña
+        <input name="password" type="password" required minlength="10" autocomplete="current-password">
+      </label>
+      <p class="hint" id="auth-hint">Mínimo 10 caracteres, con letras y números.</p>
+      <p class="error" id="auth-error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" id="auth-switch" class="btn btn-link">¿No tienes cuenta? Regístrate</button>
+        <button type="button" id="auth-cancel" class="btn btn-ghost">Cancelar</button>
+        <button type="submit" id="auth-submit" class="btn btn-primary">Entrar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
