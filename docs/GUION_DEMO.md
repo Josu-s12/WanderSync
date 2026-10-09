@@ -1,5 +1,7 @@
 # Guion de la demostración en vivo
 
+**Autor:** Josue Sarmiento · WanderSync Travel Solutions
+
 Cubre los 4 puntos que exige el enunciado: **(a)** Prefect monitoreando los flujos, **(b)** tareas distribuidas en
 Dask, **(c)** el frontend consumiendo la API GraphQL y **(d)** un fallo transaccional con compensaciones SAGA.
 Al final hay un bloque de seguridad. Duración estimada: 12 a 15 minutos.

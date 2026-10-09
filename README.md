@@ -5,10 +5,12 @@ API Gateway **GraphQL**, patrón **SAGA**, ingesta distribuida con **Dask**, orq
 **Prefect**, y seguridad por diseño. Todo el ecosistema se despliega con **un solo comando**.
 
 > Parcial práctico del segundo corte — *Patrones Arquitectónicos Avanzados*.
+> **Autor:** Josue Sarmiento
 
 | Documento | Contenido |
 |---|---|
-| [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) | Documento técnico: diagramas de arquitectura, diagramas de secuencia SAGA y justificación de decisiones |
+| [docs/Documento_Tecnico_WanderSync.pdf](docs/Documento_Tecnico_WanderSync.pdf) | **Documento técnico en PDF** (entregable) |
+| [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) | Documento técnico en Markdown: diagramas de arquitectura, diagramas de secuencia SAGA y justificación de decisiones |
 | [docs/GUION_DEMO.md](docs/GUION_DEMO.md) | Guion paso a paso para la demostración en vivo (puntos a, b, c y d del enunciado) |
 | [docs/security/REPORTE_AUDITORIA_DEPENDENCIAS.md](docs/security/REPORTE_AUDITORIA_DEPENDENCIAS.md) | Evidencia formal de la auditoría de dependencias (`pip-audit`) |
 | [docs/schema.graphql](docs/schema.graphql) | Esquema GraphQL completo del API Gateway |
@@ -56,10 +58,14 @@ flowchart LR
 ## Puesta en marcha
 
 ```bash
-cp .env.example .env        # en PowerShell: Copy-Item .env.example .env
-# edita .env y pon contraseñas propias para POSTGRES_PASSWORD y REDIS_PASSWORD
+git clone <url-del-repositorio>
+cd WanderSync
 docker compose up -d --build
 ```
+
+**No requiere ningún paso manual previo.** Las contraseñas tienen valores por defecto solo para desarrollo y
+evaluación local. Para usar contraseñas propias, copia `.env.example` a `.env` y cámbialas antes de levantar
+(si la base ya existía, recréala con `docker compose down -v`).
 
 La primera vez tarda varios minutos porque descarga las imágenes. Al arrancar, el servicio `ingestion` ejecuta
 automáticamente una **ingesta inicial** con Dask, así que el catálogo se llena en menos de un minuto. Después se

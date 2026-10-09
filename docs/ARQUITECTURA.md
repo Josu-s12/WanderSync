@@ -1,5 +1,6 @@
 # Documento Técnico de Arquitectura — WanderSync Travel Solutions
 
+**Autor:** Josue Sarmiento
 **Asignatura:** Patrones Arquitectónicos Avanzados · **Evaluación:** Parcial práctico del segundo corte
 **Proyecto:** Plataforma de empaquetamiento turístico dinámico
 
