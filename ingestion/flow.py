@@ -165,6 +165,11 @@ def wait_for_prefect(timeout: int = 120) -> None:
 
 if __name__ == "__main__":
     wait_for_prefect()
+    # Ingesta inicial al arrancar, para no esperar 10 minutos a la primera ejecución programada
+    try:
+        ingest_travel_data()
+    except Exception as exc:  # el deployment programado lo volverá a intentar
+        print(f"La ingesta inicial falló: {exc}")
     # Deployment: se ejecuta cada 10 minutos y también se puede lanzar desde la UI de Prefect
     ingest_travel_data.serve(
         name="ingesta-cada-10-min",
