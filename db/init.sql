@@ -157,3 +157,11 @@ GRANT ingestion_writer TO postgres;
 GRANT USAGE ON SCHEMA flights, hotels, cars TO ingestion_writer;
 GRANT SELECT, INSERT, UPDATE ON flights.offers, hotels.offers, cars.offers TO ingestion_writer;
 GRANT USAGE ON SEQUENCE flights.offers_id_seq, hotels.offers_id_seq, cars.offers_id_seq TO ingestion_writer;
+
+-- ---------- PASO 7: ROL PARA AUTENTICACIÓN (API Gateway) ----------
+-- El gateway solo puede leer/crear/actualizar usuarios (nunca borrar ni tocar órdenes)
+CREATE ROLE auth_service NOLOGIN;
+GRANT auth_service TO postgres;
+GRANT USAGE ON SCHEMA orders TO auth_service;
+GRANT SELECT, INSERT, UPDATE ON orders.users TO auth_service;
+GRANT USAGE ON SEQUENCE orders.users_id_seq TO auth_service;

@@ -3,27 +3,37 @@
 - Lecturas (catálogo): se delegan a pg_graphql (GraphQL nativo de Supabase/Postgres),
   pidiendo SOLO los campos que el cliente seleccionó -> cero over-fetching.
 - Escrituras (reservas): se delegan al servicio de Órdenes, que ejecuta la SAGA.
+- Seguridad: sesiones en Redis con regeneración de ID, Argon2id y rate limiting.
 """
+import asyncio
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime
 from enum import Enum
 
 import httpx
 import psycopg
 import strawberry
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from graphql import GraphQLError
+from psycopg.errors import UniqueViolation
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from strawberry.extensions import QueryDepthLimiter
+from strawberry.extensions import MaskErrors, QueryDepthLimiter
 from strawberry.fastapi import GraphQLRouter
 from strawberry.types import Info
 from strawberry.types.nodes import SelectedField
 
+import security as sec
+
 DATABASE_URL = os.environ["DATABASE_URL"]
 ORDERS_URL = os.environ["ORDERS_URL"]
 ALLOW_FAILURE_SIMULATION = os.getenv("ALLOW_FAILURE_SIMULATION", "false").lower() == "true"
+ENABLE_GRAPHIQL = os.getenv("ENABLE_GRAPHIQL", "false").lower() == "true"
+GLOBAL_RATE_LIMIT = int(os.getenv("GLOBAL_RATE_LIMIT_PER_MINUTE", "120"))
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [GATEWAY] %(message)s")
 log = logging.getLogger("gateway")
@@ -194,6 +204,47 @@ def to_order(o: dict) -> Order:
                  created_at=datetime.fromisoformat(o["created_at"]), _steps=o.get("steps"))
 
 
+@strawberry.type
+class User:
+    id: int
+    email: str
+
+
+@strawberry.type
+class SessionInfo:
+    authenticated: bool
+    email: str | None
+    fingerprint: str = strawberry.field(
+        description="Huella NO reversible del ID de sesión: permite ver en la demo que cambia tras el login")
+
+
+# ======================================================================
+# Helpers de seguridad
+# ======================================================================
+def current_user_id(info: Info) -> int:
+    user_id = info.context["session"].get("user_id")
+    if not user_id:
+        raise GraphQLError("Debes iniciar sesión", extensions={"code": "UNAUTHENTICATED"})
+    return user_id
+
+
+async def enforce_rate_limit(bucket: str, limit: int, window: int) -> None:
+    retry_after = await sec.rate_limit(bucket, limit, window)
+    if retry_after:
+        log.warning("Rate limit superado: %s", bucket)
+        raise GraphQLError(f"Demasiados intentos. Intenta de nuevo en {retry_after} s",
+                           extensions={"code": "RATE_LIMITED", "retryAfter": retry_after})
+
+
+@asynccontextmanager
+async def users_db():
+    async with await psycopg.AsyncConnection.connect(
+            DATABASE_URL, autocommit=True, row_factory=dict_row) as conn:
+        # Mínimo privilegio: rol que solo puede tocar la tabla de usuarios
+        await conn.execute("SET ROLE auth_service")
+        yield conn
+
+
 # ======================================================================
 # Cliente del servicio de Órdenes
 # ======================================================================
@@ -304,13 +355,31 @@ class Query:
         packages.sort(key=lambda p: p.total_price)
         return packages[:limit]
 
-    @strawberry.field(description="Detalle de una orden")
-    async def order(self, id: strawberry.ID) -> Order:
-        return to_order(await orders_get(f"/orders/{id}"))
+    @strawberry.field(description="Detalle de una orden del usuario autenticado")
+    async def order(self, info: Info, id: strawberry.ID) -> Order:
+        user_id = current_user_id(info)
+        o = await orders_get(f"/orders/{id}")
+        if o.get("user_id") != user_id:   # control de acceso: solo sus propias órdenes
+            raise GraphQLError("Orden no encontrada")
+        return to_order(o)
 
-    @strawberry.field(description="Órdenes recientes")
-    async def orders(self, limit: int = 20) -> list[Order]:
-        return [to_order(o) for o in await orders_get(f"/orders?limit={int(limit)}")]
+    @strawberry.field(description="Órdenes del usuario autenticado")
+    async def my_orders(self, info: Info, limit: int = 20) -> list[Order]:
+        user_id = current_user_id(info)
+        return [to_order(o) for o in await orders_get(f"/orders?user_id={user_id}&limit={int(limit)}")]
+
+    @strawberry.field(description="Usuario autenticado (null si no hay sesión)")
+    def me(self, info: Info) -> User | None:
+        session = info.context["session"]
+        if not session.get("user_id"):
+            return None
+        return User(id=session["user_id"], email=session["email"])
+
+    @strawberry.field(description="Estado de la sesión actual")
+    def session(self, info: Info) -> SessionInfo:
+        session = info.context["session"]
+        return SessionInfo(authenticated=bool(session.get("user_id")), email=session.get("email"),
+                           fingerprint=sec.fingerprint(info.context["session_id"]))
 
 
 # ======================================================================
@@ -318,11 +387,73 @@ class Query:
 # ======================================================================
 @strawberry.type
 class Mutation:
-    @strawberry.mutation(description="Reserva un paquete completo ejecutando la SAGA")
-    async def book_package(self, input: BookPackageInput) -> Order:
+    @strawberry.mutation(description="Crea una cuenta (contraseña guardada con Argon2id)")
+    async def register(self, info: Info, email: str, password: str) -> User:
+        await enforce_rate_limit(f"register:ip:{info.context['ip']}", 5, 600)
+        email = email.strip().lower()
+        if not sec.EMAIL_RE.match(email) or len(email) > 254:
+            raise GraphQLError("Correo inválido")
+        if problem := sec.password_problems(password):
+            raise GraphQLError(problem)
+
+        password_hash = await asyncio.to_thread(sec.hash_password, password)   # no bloquea el event loop
+        try:
+            async with users_db() as conn:
+                row = await (await conn.execute(
+                    "INSERT INTO orders.users (email, password_hash) VALUES (%s, %s) RETURNING id, email",
+                    (email, password_hash))).fetchone()
+        except UniqueViolation:
+            raise GraphQLError("No se pudo registrar con ese correo")
+        log.info("Usuario registrado id=%s", row["id"])
+        return User(**row)
+
+    @strawberry.mutation(description="Inicia sesión y REGENERA el ID de sesión (anti Session Fixation)")
+    async def login(self, info: Info, email: str, password: str) -> User:
+        ctx = info.context
+        email = email.strip().lower()
+        # Anti fuerza bruta: límite por IP y por cuenta
+        await enforce_rate_limit(f"login:ip:{ctx['ip']}", 5, 60)
+        await enforce_rate_limit(f"login:email:{email}", 10, 900)
+
+        async with users_db() as conn:
+            row = await (await conn.execute(
+                "SELECT id, email, password_hash FROM orders.users WHERE email = %s", (email,))).fetchone()
+        ok = await asyncio.to_thread(sec.verify_password, row["password_hash"] if row else None, password)
+        if not ok:
+            log.warning("Login fallido para %s desde %s", email, ctx["ip"])
+            raise GraphQLError("Credenciales inválidas", extensions={"code": "UNAUTHENTICATED"})
+
+        if sec.needs_rehash(row["password_hash"]):   # si se sube el costo, se actualiza el hash
+            new_hash = await asyncio.to_thread(sec.hash_password, password)
+            async with users_db() as conn:
+                await conn.execute("UPDATE orders.users SET password_hash = %s WHERE id = %s",
+                                   (new_hash, row["id"]))
+
+        old_fp = sec.fingerprint(ctx["session_id"])
+        new_session_id = await sec.regenerate_session(ctx["session_id"],
+                                                      {"user_id": row["id"], "email": row["email"]})
+        sec.set_session_cookie(ctx["response"], new_session_id)
+        ctx["session_id"], ctx["session"] = new_session_id, {"user_id": row["id"], "email": row["email"]}
+        log.info("Login OK user=%s | sesión regenerada %s -> %s",
+                 row["id"], old_fp, sec.fingerprint(new_session_id))
+        return User(id=row["id"], email=row["email"])
+
+    @strawberry.mutation(description="Cierra la sesión y destruye el ID en el servidor")
+    async def logout(self, info: Info) -> bool:
+        await sec.destroy_session(info.context["session_id"])
+        sec.clear_session_cookie(info.context["response"])
+        return True
+
+    @strawberry.mutation(description="Reserva un paquete completo ejecutando la SAGA (requiere sesión)")
+    async def book_package(self, info: Info, input: BookPackageInput) -> Order:
+        user_id = current_user_id(info)
+        # Checkout/pago: endpoint sensible -> límite por usuario y por IP
+        await enforce_rate_limit(f"checkout:user:{user_id}", 5, 60)
+        await enforce_rate_limit(f"checkout:ip:{info.context['ip']}", 10, 60)
         if input.simulate_failure_at and not ALLOW_FAILURE_SIMULATION:
             raise GraphQLError("La simulación de fallos está deshabilitada")
         payload = {
+            "user_id": user_id,
             "flight_offer_id": input.flight_offer_id,
             "hotel_offer_id": input.hotel_offer_id,
             "car_offer_id": input.car_offer_id,
@@ -337,14 +468,61 @@ class Mutation:
         return to_order(r.json())
 
 
-schema = strawberry.Schema(
+def is_unexpected(error) -> bool:
+    """Error interno (bug, BD caída...) y no un error de negocio lanzado a propósito."""
+    return error.original_error is not None and not isinstance(error.original_error, GraphQLError)
+
+
+class WanderSyncSchema(strawberry.Schema):
+    def process_errors(self, errors, execution_context=None):
+        # Solo se registran con traza los errores inesperados
+        super().process_errors([e for e in errors if is_unexpected(e)], execution_context)
+
+
+schema = WanderSyncSchema(
     query=Query,
     mutation=Mutation,
-    extensions=[QueryDepthLimiter(max_depth=6)],   # protege contra consultas abusivas
+    extensions=[
+        QueryDepthLimiter(max_depth=6),   # protege contra consultas abusivas
+        # Los errores internos se ocultan al cliente ("Unexpected error.") para no filtrar detalles
+        MaskErrors(should_mask_error=is_unexpected),
+    ],
 )
 
-app = FastAPI(title="WanderSync - API Gateway (GraphQL)")
-app.include_router(GraphQLRouter(schema), prefix="/graphql")
+async def get_context(request: Request, response: Response) -> dict:
+    """Carga la sesión del cookie. Un ID desconocido (p. ej. fijado por un atacante) NO se
+    acepta: se emite uno nuevo generado por el servidor."""
+    session_id = request.cookies.get(sec.SESSION_COOKIE)
+    session = await sec.load_session(session_id)
+    if session is None:
+        session = {"user_id": None}
+        session_id = await sec.create_session(session)   # sesión anónima
+        sec.set_session_cookie(response, session_id)
+    return {"session_id": session_id, "session": session, "ip": sec.client_ip(request)}
+
+
+app = FastAPI(title="WanderSync - API Gateway (GraphQL)", docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(
+    GraphQLRouter(schema, context_getter=get_context, graphql_ide="graphiql" if ENABLE_GRAPHIQL else None),
+    prefix="/graphql",
+)
+
+
+@app.middleware("http")
+async def security_middleware(request: Request, call_next):
+    # Rate limit global por IP (protección contra DoS sobre el endpoint GraphQL)
+    if request.url.path.startswith("/graphql") and request.method == "POST":
+        retry_after = await sec.rate_limit(f"global:{sec.client_ip(request)}", GLOBAL_RATE_LIMIT, 60)
+        if retry_after:
+            return JSONResponse({"errors": [{"message": "Demasiadas solicitudes"}]}, status_code=429,
+                                headers={"Retry-After": str(retry_after)})
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if request.method == "POST":
+        response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.get("/health")
