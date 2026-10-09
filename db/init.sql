@@ -132,3 +132,21 @@ CREATE TABLE orders.payments (
 );
 
 GRANT ALL ON orders.payments TO postgres;
+
+
+-- ---------- PASO 4: GRAPHQL NATIVO (pg_graphql) PARA EL API GATEWAY ----------
+-- Rol de SOLO LECTURA: el gateway solo puede ver las tablas de ofertas
+CREATE ROLE gateway_reader NOLOGIN;
+GRANT gateway_reader TO postgres;
+GRANT USAGE ON SCHEMA flights, hotels, cars, graphql TO gateway_reader;
+GRANT SELECT ON flights.offers, hotels.offers, cars.offers TO gateway_reader;
+
+-- Nombres en camelCase (price_per_night -> pricePerNight)
+COMMENT ON SCHEMA flights IS e'@graphql({"inflect_names": true})';
+COMMENT ON SCHEMA hotels  IS e'@graphql({"inflect_names": true})';
+COMMENT ON SCHEMA cars    IS e'@graphql({"inflect_names": true})';
+
+-- Las 3 tablas se llaman "offers": se les da un nombre único en GraphQL
+COMMENT ON TABLE flights.offers IS e'@graphql({"name": "FlightOffer"})';
+COMMENT ON TABLE hotels.offers  IS e'@graphql({"name": "HotelOffer"})';
+COMMENT ON TABLE cars.offers    IS e'@graphql({"name": "CarOffer"})';

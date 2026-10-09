@@ -78,5 +78,20 @@ services:
       cars:
         condition: service_started
 
+  gateway:
+    build: ./gateway
+    container_name: ws-gateway
+    environment:
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/wandersync
+      ORDERS_URL: http://orders:8000
+      ALLOW_FAILURE_SIMULATION: "true"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      orders:
+        condition: service_started
+
 volumes:
   pgdata:
