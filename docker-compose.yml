@@ -93,5 +93,15 @@ services:
       orders:
         condition: service_started
 
+  mock-source:
+    build: ./mock-source
+    container_name: ws-mock-source
+    environment:
+      FAILURE_RATE: "0.2"          # 20% de las peticiones fallan (503 / 429)
+      MAX_LATENCY: "1.0"           # segundos
+      PRICE_WINDOW_SECONDS: "600"  # los precios cambian cada 10 minutos
+    ports:
+      - "8080:8000"
+
 volumes:
   pgdata:
