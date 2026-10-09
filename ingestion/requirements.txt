@@ -1,0 +1,7 @@
+prefect==3.8.8
+prefect-dask==0.3.7
+dask[distributed]==2026.8.0
+bokeh==3.10.0
+httpx==0.28.1
+beautifulsoup4==4.15.0
+psycopg[binary]==3.3.6

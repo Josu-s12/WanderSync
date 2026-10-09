@@ -103,5 +103,65 @@ services:
     ports:
       - "8080:8000"
 
+  # ---------------- Orquestación y observabilidad ----------------
+  prefect-server:
+    image: prefecthq/prefect:3.8.8-python3.12
+    container_name: ws-prefect
+    command: prefect server start --host 0.0.0.0 --port 4200
+    environment:
+      PREFECT_UI_API_URL: http://localhost:4200/api
+    volumes:
+      - prefectdata:/root/.prefect
+    ports:
+      - "4200:4200"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # ---------------- Computación distribuida ----------------
+  dask-scheduler:
+    build: ./ingestion
+    image: wandersync-ingestion
+    container_name: ws-dask-scheduler
+    command: dask scheduler --dashboard-address :8787
+    ports:
+      - "8788:8787"   # dashboard de Dask en http://localhost:8788
+
+  dask-worker:
+    build: ./ingestion
+    image: wandersync-ingestion
+    command: dask worker tcp://dask-scheduler:8786 --nthreads 2
+    deploy:
+      replicas: 2
+    environment: &ingestion-env
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD}@db:5432/wandersync
+      SOURCE_URL: http://mock-source:8000
+      DASK_SCHEDULER_ADDRESS: tcp://dask-scheduler:8786
+      PREFECT_API_URL: http://prefect-server:4200/api
+    depends_on:
+      dask-scheduler:
+        condition: service_started
+      prefect-server:
+        condition: service_healthy
+
+  ingestion:
+    build: ./ingestion
+    image: wandersync-ingestion
+    container_name: ws-ingestion
+    command: python flow.py
+    environment: *ingestion-env
+    depends_on:
+      db:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+      dask-worker:
+        condition: service_started
+      mock-source:
+        condition: service_started
+
 volumes:
   pgdata:
+  prefectdata:

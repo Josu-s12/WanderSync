@@ -150,3 +150,10 @@ COMMENT ON SCHEMA cars    IS e'@graphql({"inflect_names": true})';
 COMMENT ON TABLE flights.offers IS e'@graphql({"name": "FlightOffer"})';
 COMMENT ON TABLE hotels.offers  IS e'@graphql({"name": "HotelOffer"})';
 COMMENT ON TABLE cars.offers    IS e'@graphql({"name": "CarOffer"})';
+-- ---------- PASO 6: ROL DE ESCRITURA PARA LA INGESTA (Dask + Prefect) ----------
+-- Los workers de Dask solo pueden insertar/actualizar las tablas de ofertas
+CREATE ROLE ingestion_writer NOLOGIN;
+GRANT ingestion_writer TO postgres;
+GRANT USAGE ON SCHEMA flights, hotels, cars TO ingestion_writer;
+GRANT SELECT, INSERT, UPDATE ON flights.offers, hotels.offers, cars.offers TO ingestion_writer;
+GRANT USAGE ON SEQUENCE flights.offers_id_seq, hotels.offers_id_seq, cars.offers_id_seq TO ingestion_writer;
