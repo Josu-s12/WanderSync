@@ -1,0 +1,138 @@
+input BookPackageInput {
+  flightOfferId: Int!
+  hotelOfferId: Int!
+  carOfferId: Int!
+  nights: Int! = 1
+  days: Int! = 1
+
+  """Solo para la demo: fuerza un fallo en ese paso de la SAGA"""
+  simulateFailureAt: FailStep = null
+}
+
+type CarOffer {
+  id: Int!
+  sourceId: String
+  city: String
+  model: String
+  category: String
+  pricePerDay: Float
+  units: Int
+  scrapedAt: DateTime
+}
+
+"""Date with time (isoformat)"""
+scalar DateTime
+
+enum FailStep {
+  FLIGHT
+  HOTEL
+  CAR
+  PAYMENT
+}
+
+type FlightOffer {
+  id: Int!
+  sourceId: String
+  origin: String
+  destination: String
+  airline: String
+  departAt: DateTime
+  price: Float
+  seats: Int
+  scrapedAt: DateTime
+}
+
+type HotelOffer {
+  id: Int!
+  sourceId: String
+  city: String
+  name: String
+  stars: Int
+  pricePerNight: Float
+  rooms: Int
+  scrapedAt: DateTime
+}
+
+type Mutation {
+  """Crea una cuenta (contraseña guardada con Argon2id)"""
+  register(email: String!, password: String!): User!
+
+  """Inicia sesión y REGENERA el ID de sesión (anti Session Fixation)"""
+  login(email: String!, password: String!): User!
+
+  """Cierra la sesión y destruye el ID en el servidor"""
+  logout: Boolean!
+
+  """Reserva un paquete completo ejecutando la SAGA (requiere sesión)"""
+  bookPackage(input: BookPackageInput!): Order!
+}
+
+type Order {
+  id: ID!
+  status: String!
+  total: Float
+  createdAt: DateTime!
+
+  """Bitácora de la SAGA (solo se consulta si el cliente la pide)"""
+  steps: [SagaStep!]!
+}
+
+type Query {
+  health: String!
+
+  """Vuelos disponibles"""
+  flights(origin: String = null, destination: String = null, limit: Int! = 20): [FlightOffer!]!
+
+  """Hoteles disponibles"""
+  hotels(city: String = null, minStars: Int = null, limit: Int! = 20): [HotelOffer!]!
+
+  """Autos disponibles"""
+  cars(city: String = null, category: String = null, limit: Int! = 20): [CarOffer!]!
+
+  """Consolida vuelo + hotel + auto en paquetes ordenados por precio"""
+  searchPackages(origin: String!, destination: String!, nights: Int! = 1, days: Int! = 1, maxBudget: Float = null, limit: Int! = 5): [TravelPackage!]!
+
+  """Detalle de una orden del usuario autenticado"""
+  order(id: ID!): Order!
+
+  """Órdenes del usuario autenticado"""
+  myOrders(limit: Int! = 20): [Order!]!
+
+  """Usuario autenticado (null si no hay sesión)"""
+  me: User
+
+  """Estado de la sesión actual"""
+  session: SessionInfo!
+}
+
+type SagaStep {
+  step: String!
+  action: String!
+  result: String!
+  detail: String
+  at: DateTime!
+}
+
+type SessionInfo {
+  authenticated: Boolean!
+  email: String
+
+  """
+  Huella NO reversible del ID de sesión: permite ver en la demo que cambia tras el login
+  """
+  fingerprint: String!
+}
+
+type TravelPackage {
+  flight: FlightOffer!
+  hotel: HotelOffer!
+  car: CarOffer!
+  nights: Int!
+  days: Int!
+  totalPrice: Float!
+}
+
+type User {
+  id: Int!
+  email: String!
+}
