@@ -1,5 +1,6 @@
 """Extracción y limpieza de datos turísticos (se ejecuta dentro de los workers de Dask)."""
 import re
+import unicodedata
 from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
@@ -127,8 +128,79 @@ def parse_google_flights(html_text: str, origin: str, destination: str, date) ->
     return list(rows.values())
 
 
-def slug(text: str) -> str:
-    return "".join(ch for ch in text.upper() if ch.isalnum())
+# ----------------------------------------------------------------------
+# Google Hotels (fuente REAL de hoteles)
+#   aria-label="Precios de Hotel OZ Luxurya partir de $ 226.357 ..."   (nombre + precio por noche)
+#   "Servicios de Hotel OZ Luxury, un Hotel de 4 estrellas.: ..."        (categoría del hotel)
+# ----------------------------------------------------------------------
+GH_PRICE = re.compile(r"^Precios de (.+?)a partir de \$\s?([\d.]+)")
+GH_STARS = re.compile(r"Servicios de (.+?), un Hotel de (\d) estrellas")
+GH_DEFAULT_STARS = 3   # hostales y apartamentos no publican categoría
+GH_DEFAULT_ROOMS = 5   # Google Hotels no publica habitaciones disponibles
+
+
+def parse_google_hotels(html_text: str, city: str) -> list[dict]:
+    soup = BeautifulSoup(html_text, "html.parser")
+    text = clean_text(soup.get_text(" ")) or ""
+    stars = {clean_text(name): int(n) for name, n in GH_STARS.findall(text)}
+    rows = {}
+    for el in soup.select("[aria-label]"):
+        match = GH_PRICE.match(clean_text(el["aria-label"]) or "")
+        if not match:
+            continue
+        name = clean_text(match.group(1))
+        key = f"gh-{slug(city)}-{slug(name)}"
+        rows[key] = {
+            "source_id": key,
+            "city": city,
+            "name": name,
+            "stars": stars.get(name, GH_DEFAULT_STARS),
+            "price_per_night": parse_price(match.group(2)),
+            "rooms": GH_DEFAULT_ROOMS,
+        }
+    return [r for r in rows.values() if r["price_per_night"]]
+
+
+# ----------------------------------------------------------------------
+# Kayak autos (fuente REAL de autos; la página se renderiza con JavaScript)
+#   <img alt="Tipo de auto: Mini - Renault Kwid o similar">
+#   <img alt="Agencia de alquiler: National">   ...   $477.798  Total
+# ----------------------------------------------------------------------
+KC_CAR = re.compile(r'alt="Tipo de auto: (.+?) - (.+?) o similar"')
+KC_AGENCY = re.compile(r'alt="Agencia de alquiler: ([^"]+)"')
+KC_TOTAL = re.compile(r"\$\s?(\d{1,3}(?:\.\d{3})+)")
+KC_DEFAULT_UNITS = 3   # Kayak no publica unidades disponibles
+
+
+def parse_kayak_cars(html_text: str, city: str, days: int) -> list[dict]:
+    starts = [m.start() for m in re.finditer(r'alt="Tipo de auto:', html_text)]
+    rows = {}
+    for i, start in enumerate(starts):
+        card = html_text[start: starts[i + 1] if i + 1 < len(starts) else start + 20000]
+        car, agency, total = KC_CAR.search(card), KC_AGENCY.search(card), KC_TOTAL.search(card)
+        if not (car and total):
+            continue
+        category, model = clean_text(car.group(1)), clean_text(car.group(2))
+        agency_name = clean_text(agency.group(1)) if agency else "Agencia"
+        key = f"kc-{slug(city)}-{slug(agency_name)}-{slug(model)}-{slug(category)}"
+        price_total = parse_price(total.group(1))
+        if key not in rows or price_total < rows[key]["_total"]:
+            rows[key] = {
+                "source_id": key,
+                "city": city,
+                "model": f"{model} · {agency_name}",
+                "category": category,
+                "price_per_day": round(price_total / days),
+                "units": KC_DEFAULT_UNITS,
+                "_total": price_total,
+            }
+    return [{k: v for k, v in r.items() if k != "_total"} for r in rows.values()]
+
+
+def slug(text: str, max_len: int = 40) -> str:
+    """Identificador estable: sin tildes, solo letras y números, en mayúsculas."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return "".join(ch for ch in ascii_text.upper() if ch.isalnum())[:max_len]
 
 
 PARSERS = {"flights": parse_flights, "hotels": parse_hotels, "cars": parse_cars}

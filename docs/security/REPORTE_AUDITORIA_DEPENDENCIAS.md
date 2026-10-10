@@ -1,7 +1,7 @@
 # Reporte de auditoría de dependencias (Supply Chain Security)
 
 - **Herramienta:** `pip-audit 2.10.1` (base de datos de vulnerabilidades de PyPI / OSV)
-- **Fecha de ejecución:** 2026-10-10 16:11 UTC
+- **Fecha de ejecución:** 2026-10-10 16:56 UTC
 - **Alcance:** dependencias directas **y transitivas** de cada microservicio, resueltas desde su `requirements.txt`
 - **Cómo reproducir:** `./scripts/audit.ps1` (Windows) o `./scripts/audit.sh` (Linux/macOS)
 
@@ -15,7 +15,7 @@
 | orders | `services/orders/requirements.txt` | 109 | 0 | ✅ Sin vulnerabilidades conocidas |
 | gateway | `gateway/requirements.txt` | 35 | 0 | ✅ Sin vulnerabilidades conocidas |
 | mock-source | `mock-source/requirements.txt` | 20 | 0 | ✅ Sin vulnerabilidades conocidas |
-| ingestion | `ingestion/requirements.txt` | 125 | 0 | ✅ Sin vulnerabilidades conocidas |
+| ingestion | `ingestion/requirements.txt` | 127 | 0 | ✅ Sin vulnerabilidades conocidas |
 
 **Total de vulnerabilidades en el proyecto: 0**
 
@@ -25,19 +25,19 @@ Para demostrar que la auditoría realmente detecta riesgos, se auditó a propós
 
 | Paquete | Versión | ID | Alias | Corregido en |
 |---|---|---|---|---|
-| requests | 2.25.0 | PYSEC-2023-74 | GHSA-j8r2-6x86-q33q, CVE-2023-32681 | 2.31.0 |
-| requests | 2.25.0 | PYSEC-2026-1873 | CVE-2024-35195, GHSA-9wx4-h78v-vm56 | 2.32.0 |
-| requests | 2.25.0 | PYSEC-2026-1872 | GHSA-9hjg-9r4m-mvj7, CVE-2024-47081 | 2.32.4 |
+| requests | 2.25.0 | PYSEC-2023-74 | CVE-2023-32681, GHSA-j8r2-6x86-q33q | 2.31.0 |
+| requests | 2.25.0 | PYSEC-2026-1873 | GHSA-9wx4-h78v-vm56, CVE-2024-35195 | 2.32.0 |
+| requests | 2.25.0 | PYSEC-2026-1872 | CVE-2024-47081, GHSA-9hjg-9r4m-mvj7 | 2.32.4 |
 | requests | 2.25.0 | PYSEC-2026-2275 | CVE-2026-25645, GHSA-gc5v-m9x4-r6x2 | 2.33.0 |
 | idna | 2.10 | PYSEC-2024-60 | GHSA-jjg7-2v4v-x38h, CVE-2024-3651 | 3.7 |
-| idna | 2.10 | PYSEC-2026-215 | GHSA-65pc-fj4g-8rjx, CVE-2026-45409 | 3.15 |
-| urllib3 | 1.26.20 | PYSEC-2026-1999 | GHSA-pq67-6m6q-mj2v, CVE-2025-50181 | 2.5.0 |
+| idna | 2.10 | PYSEC-2026-215 | CVE-2026-45409, GHSA-65pc-fj4g-8rjx | 3.15 |
+| urllib3 | 1.26.20 | PYSEC-2026-1999 | CVE-2025-50181, GHSA-pq67-6m6q-mj2v | 2.5.0 |
 | urllib3 | 1.26.20 | PYSEC-2026-1998 | CVE-2025-66418, GHSA-gm62-xv2j-4w53 | 2.6.0 |
-| urllib3 | 1.26.20 | PYSEC-2026-1994 | GHSA-2xpw-w6gg-jr37, CVE-2025-66471 | 2.6.0 |
+| urllib3 | 1.26.20 | PYSEC-2026-1994 | CVE-2025-66471, GHSA-2xpw-w6gg-jr37 | 2.6.0 |
 | urllib3 | 1.26.20 | PYSEC-2026-1996 | CVE-2026-21441, GHSA-38jv-5279-wg99 | 2.6.3 |
 | urllib3 | 1.26.20 | PYSEC-2026-141 | GHSA-qccp-gfcp-xxvc, CVE-2026-44431 | 2.7.0 |
-| urllib3 | 1.26.20 | PYSEC-2026-4177 | CVE-2026-97689, GHSA-vxq7-64xx-v4gw | 2.8.0 |
-| urllib3 | 1.26.20 | PYSEC-2026-4175 | GHSA-8988-9cw3-xx77, CVE-2026-97687 | 2.8.0 |
+| urllib3 | 1.26.20 | PYSEC-2026-4177 | GHSA-vxq7-64xx-v4gw, CVE-2026-97689 | 2.8.0 |
+| urllib3 | 1.26.20 | PYSEC-2026-4175 | CVE-2026-97687, GHSA-8988-9cw3-xx77 | 2.8.0 |
 
 ## Medidas de seguridad de la cadena de suministro aplicadas
 
@@ -322,7 +322,7 @@ Para demostrar que la auditoría realmente detecta riesgos, se auditó a propós
 
 </details>
 
-<details><summary><b>ingestion</b> (125 paquetes)</summary>
+<details><summary><b>ingestion</b> (127 paquetes)</summary>
 
 | Paquete | Versión | Vulnerabilidades |
 |---|---|---|
@@ -394,6 +394,7 @@ Para demostrar que la auditoría realmente detecta riesgos, se auditó a propós
 | pathspec | 1.1.1 | 0 |
 | pendulum | 3.2.0 | 0 |
 | pillow | 12.3.0 | 0 |
+| playwright | 1.63.0 | 0 |
 | pluggy | 1.6.0 | 0 |
 | prefect | 3.8.8 | 0 |
 | prefect-dask | 0.3.7 | 0 |
@@ -408,6 +409,7 @@ Para demostrar que la auditoría realmente detecta riesgos, se auditó a propós
 | pydantic-extra-types | 2.11.1 | 0 |
 | pydantic-settings | 2.15.0 | 0 |
 | pydocket | 0.27.0 | 0 |
+| pyee | 13.0.1 | 0 |
 | pygments | 2.21.0 | 0 |
 | python-dateutil | 2.9.0.post0 | 0 |
 | python-dotenv | 1.2.4 | 0 |
