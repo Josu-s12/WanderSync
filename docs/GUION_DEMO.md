@@ -50,7 +50,11 @@ Muestra el diagrama de [ARQUITECTURA.md](ARQUITECTURA.md#2-vista-general-de-la-a
    > los 2 workers de Dask."
    - Opcional: la pestaña **Workers** muestra los 2 workers.
 4. Vuelve a **Prefect** → **Runs** → abre la ejecución en curso:
-   - El **grafo de tareas**: `scrape-page` → `parse-and-clean` → `upsert-offers` y `market-stats`.
+   - El **grafo de tareas**: `scrape-google-flights` (vuelos **reales**), `scrape-page` → `parse-and-clean`
+     (hoteles y autos), `upsert-offers` y `market-stats`.
+   - En **Logs**, las líneas `Google Flights Bogota -> Cartagena (...): 31 vuelos reales`:
+     > "Los vuelos se scrapean en vivo de Google Flights. Los hoteles y autos vienen de una fuente simulada, porque
+     > Booking.com bloquea el acceso automatizado con un desafío anti-bots."
    - Busca tareas en estado **Retrying / AwaitingRetry**, o con varios intentos:
      > "La fuente responde 503 o 429 el 20% de las veces. Prefect reintenta automáticamente con backoff
      > exponencial y jitter, hasta 4 veces."
@@ -58,7 +62,7 @@ Muestra el diagrama de [ARQUITECTURA.md](ARQUITECTURA.md#2-vista-general-de-la-a
      datos incompletos.
    - Al final, el log **Resumen de la ingesta** muestra páginas, páginas fallidas, filas guardadas y los precios
      promedio calculados con **Dask Bag**.
-5. *(Opcional)* Muestra la fuente cruda en http://localhost:8080/flights?origin=Bogota&destination=Cartagena:
+5. *(Opcional)* Muestra la fuente cruda de hoteles en http://localhost:8080/hotels?city=Cartagena:
    > "Es HTML con precios en formatos distintos. El pipeline los normaliza."
 
 ---
@@ -146,7 +150,9 @@ docker compose exec db psql -U postgres -d wandersync -P pager=off -c "select o.
 - **¿Qué pasa si falla una compensación?** Se reintenta hasta 3 veces con backoff. Si aun así falla, la orden queda
   `COMPENSATION_PENDING` y la recuperación automática la vuelve a intentar.
 - **¿Qué pasa si reintentan la misma reserva?** Los endpoints son idempotentes por `order_id`, así que no se duplica.
-- **¿Por qué una fuente mock?** Los portales reales prohíben el scraping y bloquean bots. La mock reproduce sus
-  dificultades de forma ética y controlada (ver D9).
+- **¿Los vuelos son reales?** Sí, se scrapean de Google Flights en cada ingesta. Si Google bloqueara, esa ruta se
+  llena automáticamente desde la fuente mock (ver D9).
+- **¿Por qué los hoteles no son de Booking?** Booking.com responde con un desafío anti-bots (AWS WAF). Evadirlo no
+  es correcto, así que los hoteles y autos vienen de la fuente simulada, que reproduce sus dificultades.
 - **¿Cómo se evita el over-fetching hacia la base?** El gateway propaga la selección de campos del cliente a la
   consulta de `pg_graphql` (sección 6.1).

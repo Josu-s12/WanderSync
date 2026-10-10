@@ -167,6 +167,7 @@ services:
     environment: &ingestion-env
       DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-wandersync_dev_pg}@db:5432/wandersync
       SOURCE_URL: http://mock-source:8000
+      FLIGHT_SOURCE: "google"      # vuelos reales de Google Flights ("mock" para usar solo la fuente simulada)
       DASK_SCHEDULER_ADDRESS: tcp://dask-scheduler:8786
       PREFECT_API_URL: http://prefect-server:4200/api
     depends_on:

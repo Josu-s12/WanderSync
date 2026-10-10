@@ -1,10 +1,13 @@
 """Flow de Prefect que orquesta la ingesta distribuida en Dask - WanderSync
 
-  scrape_page (Dask, reintentos con backoff) -> parse_and_clean (Dask) -> upsert_offers (Dask)
-                                                                     -> market_stats (Dask Bag)
+  Vuelos:          scrape_google_flights (Google Flights REAL, reintentos)  --(si falla)--> fuente mock
+  Hoteles y autos: scrape_page (fuente mock, reintentos con backoff) -> parse_and_clean
+  Todo:            upsert_offers (Dask)  +  market_stats (Dask Bag)
 """
 import os
+import random
 import time
+from datetime import date, timedelta
 
 import dask.bag as db
 import httpx
@@ -19,6 +22,14 @@ SOURCE_URL = os.environ["SOURCE_URL"]
 DATABASE_URL = os.environ["DATABASE_URL"]
 DASK_SCHEDULER = os.environ["DASK_SCHEDULER_ADDRESS"]
 PREFECT_API_URL = os.environ["PREFECT_API_URL"]
+FLIGHT_SOURCE = os.getenv("FLIGHT_SOURCE", "google")   # "google" (real) o "mock"
+
+GOOGLE_FLIGHTS_URL = os.getenv("GOOGLE_FLIGHTS_URL", "https://www.google.com/travel/flights")
+# Google Flights solo entrega los resultados a navegadores reconocidos
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36")
+IATA = {"Bogota": "BOG", "Medellin": "MDE", "Cali": "CLO",
+        "Cartagena": "CTG", "Santa Marta": "SMR", "San Andres": "ADZ"}
 
 DEFAULT_ROUTES = [
     ["Bogota", "Cartagena"], ["Bogota", "Santa Marta"], ["Bogota", "San Andres"],
@@ -66,6 +77,26 @@ def scrape_page(kind: str, params: dict, page: int) -> str:
     return r.text
 
 
+@task(name="scrape-google-flights", tags=["scraping", "google-flights"],
+      retries=2, retry_delay_seconds=[10, 30], task_run_name="google-flights {origin}-{destination}")
+def scrape_google_flights(origin: str, destination: str, travel_date: date) -> list[dict]:
+    """Vuelos REALES desde Google Flights (resultados renderizados en el servidor)."""
+    logger = get_run_logger()
+    time.sleep(random.uniform(0, 3))   # cortesía: no lanzar todas las consultas en el mismo instante
+    query = f"Flights to {IATA[destination]} from {IATA[origin]} on {travel_date:%Y-%m-%d} oneway"
+    r = httpx.get(GOOGLE_FLIGHTS_URL, params={"q": query, "hl": "es", "gl": "co", "curr": "COP"},
+                  headers={"User-Agent": BROWSER_UA, "Accept-Language": "es-CO,es;q=0.9"},
+                  timeout=20, follow_redirects=True)
+    r.raise_for_status()
+    if "/sorry/" in str(r.url) or "unsupported" in str(r.url):
+        raise RuntimeError(f"Google rechazó la consulta ({r.url.path})")
+    rows = scraping.parse_google_flights(r.text, origin, destination, travel_date)
+    if not rows:
+        raise RuntimeError("Google Flights no devolvió vuelos (posible bloqueo o cambio de formato)")
+    logger.info("Google Flights %s -> %s (%s): %s vuelos reales", origin, destination, travel_date, len(rows))
+    return rows
+
+
 @task(name="parse-and-clean", task_run_name="clean {kind} p{page}")
 def parse_and_clean(kind: str, html: str, page: int) -> list[dict]:
     rows, discarded = scraping.clean(kind, html)
@@ -75,7 +106,7 @@ def parse_and_clean(kind: str, html: str, page: int) -> list[dict]:
 
 
 @task(name="upsert-offers", retries=2, retry_delay_seconds=5, task_run_name="upsert {kind} ({n} filas)")
-def upsert_offers(kind: str, rows: list[dict], n: int) -> int:
+def upsert_offers(kind: str, rows: list[dict], n: int, replaced_routes: list | None = None) -> int:
     if not rows:
         return 0
     with psycopg.connect(DATABASE_URL) as conn:
@@ -83,6 +114,12 @@ def upsert_offers(kind: str, rows: list[dict], n: int) -> int:
         conn.execute("SET ROLE ingestion_writer")
         with conn.cursor() as cur:
             cur.executemany(UPSERT_SQL[kind], rows)
+            # En las rutas actualizadas con datos reales se retiran las ofertas que ya no están
+            # en la fuente (de otras fechas, de la fuente mock o semilla): quedan sin cupos
+            for origin, destination, ids in replaced_routes or []:
+                cur.execute("""UPDATE flights.offers SET seats = 0
+                               WHERE origin = %s AND destination = %s AND NOT (source_id = ANY(%s))""",
+                            (origin, destination, ids))
     return len(rows)
 
 
@@ -110,21 +147,44 @@ def market_stats(rows: list[dict]) -> dict:
       task_runner=DaskTaskRunner(address=DASK_SCHEDULER))
 def ingest_travel_data(routes: list[list[str]] = DEFAULT_ROUTES,
                        cities: list[str] = DEFAULT_CITIES,
-                       pages: int = 3) -> dict:
+                       pages: int = 3,
+                       flight_source: str = FLIGHT_SOURCE,
+                       days_ahead: int = 14) -> dict:
     logger = get_run_logger()
+    travel_date = date.today() + timedelta(days=days_ahead)
 
-    jobs = [("flights", {"origin": o, "destination": d}, p) for o, d in routes for p in range(1, pages + 1)]
-    jobs += [(kind, {"city": c}, p) for kind in ("hotels", "cars") for c in cities for p in range(1, pages + 1)]
-    logger.info("Enviando %s páginas a scrapear al clúster de Dask (%s)", len(jobs), DASK_SCHEDULER)
+    # 1) Vuelos REALES desde Google Flights (una consulta por ruta, en paralelo en Dask)
+    google = {}
+    if flight_source == "google":
+        logger.info("Consultando Google Flights para %s rutas (fecha de viaje %s)", len(routes), travel_date)
+        google = {(o, d): scrape_google_flights.submit(o, d, travel_date) for o, d in routes}
 
-    # 1) Scraping en paralelo en los workers de Dask
+    # 2) Hoteles y autos desde la fuente mock (Booking.com bloquea el acceso automatizado)
+    jobs = [(kind, {"city": c}, p) for kind in ("hotels", "cars") for c in cities for p in range(1, pages + 1)]
+    if flight_source != "google":
+        jobs += [("flights", {"origin": o, "destination": d}, p) for o, d in routes for p in range(1, pages + 1)]
+
+    by_kind = {"flights": [], "hotels": [], "cars": []}
+    replaced_routes, fallback_routes = [], []
+    for (o, d), fut in google.items():
+        fut.wait()
+        if fut.state.is_completed():
+            rows = fut.result()
+            by_kind["flights"] += rows
+            replaced_routes.append([o, d, [r["source_id"] for r in rows]])
+        else:   # Resiliencia: si Google no responde, esa ruta se scrapea de la fuente mock
+            logger.warning("Google Flights no respondió para %s -> %s: se usa la fuente mock", o, d)
+            fallback_routes.append([o, d])
+            jobs += [("flights", {"origin": o, "destination": d}, p) for p in range(1, pages + 1)]
+
+    logger.info("Enviando %s páginas de la fuente mock al clúster de Dask (%s)", len(jobs), DASK_SCHEDULER)
+    # 3) Scraping de la fuente mock en paralelo en los workers de Dask
     html = [scrape_page.submit(kind, params, page) for kind, params, page in jobs]
-    # 2) Limpieza en paralelo (cada una espera solo a su página)
+    # 4) Limpieza en paralelo (cada una espera solo a su página)
     cleaned = [parse_and_clean.submit(kind, h, page) for (kind, _, page), h in zip(jobs, html)]
 
-    # 3) Se agrupan los resultados válidos por tipo (las páginas que fallaron tras
+    # 5) Se agrupan los resultados válidos por tipo (las páginas que fallaron tras
     #    agotar los reintentos se omiten sin tumbar toda la ingesta)
-    by_kind = {"flights": [], "hotels": [], "cars": []}
     failed_pages = 0
     for (kind, _, _), fut in zip(jobs, cleaned):
         fut.wait()
@@ -133,20 +193,23 @@ def ingest_travel_data(routes: list[list[str]] = DEFAULT_ROUTES,
         else:
             failed_pages += 1
 
-    # 4) Persistencia en paralelo
-    upserts = {k: upsert_offers.submit(k, rows, len(rows)) for k, rows in by_kind.items()}
+    # 6) Persistencia en paralelo
+    upserts = {k: upsert_offers.submit(k, rows, len(rows), replaced_routes if k == "flights" else None)
+               for k, rows in by_kind.items()}
     # 5) Estadísticas de mercado con Dask Bag
     all_rows = [{**r, "kind": k} for k, rows in by_kind.items() for r in rows]
     stats = market_stats.submit(all_rows)
 
     summary = {
-        "paginas": len(jobs),
+        "vuelos_google_flights": {"rutas_ok": len(replaced_routes), "rutas_con_respaldo_mock": fallback_routes,
+                                  "fecha_viaje": str(travel_date)},
+        "paginas_mock": len(jobs),
         "paginas_fallidas": failed_pages,
         "guardados": {k: f.result() for k, f in upserts.items()},
         "precio_promedio": stats.result(),
     }
     logger.info("Resumen de la ingesta: %s", summary)
-    if failed_pages == len(jobs):
+    if failed_pages == len(jobs) and not replaced_routes:
         raise RuntimeError("Ninguna página pudo descargarse")
     return summary
 
@@ -174,6 +237,6 @@ if __name__ == "__main__":
     ingest_travel_data.serve(
         name="ingesta-cada-10-min",
         interval=600,
-        description="Scraping distribuido en Dask de vuelos, hoteles y autos",
+        description="Scraping distribuido en Dask: vuelos reales de Google Flights, hoteles y autos",
         tags=["dask", "scraping"],
     )

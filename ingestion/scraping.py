@@ -1,8 +1,10 @@
 """Extracción y limpieza de datos turísticos (se ejecuta dentro de los workers de Dask)."""
 import re
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from bs4 import BeautifulSoup
+
+COLOMBIA_TZ = timezone(timedelta(hours=-5))
 
 
 def clean_text(value: str | None) -> str | None:
@@ -83,6 +85,50 @@ def parse_cars(html: str) -> list[dict]:
             "units": parse_count(_text(card, "units")),
         })
     return rows
+
+
+# ----------------------------------------------------------------------
+# Google Flights (fuente REAL de vuelos)
+# Cada resultado trae un aria-label con una frase completa, por ejemplo:
+#   "A partir de 184350 pesos colombianos. Vuelo directo de LATAM. ... Sale de Aeropuerto
+#    Internacional El Dorado el domingo, noviembre 15 a las 18:15. Llega a ... Duración total: 1 h 30 min."
+# ----------------------------------------------------------------------
+GF_PRICE = re.compile(r"A partir de ([\d.,]+) pesos colombianos")
+GF_AIRLINE = re.compile(r"Vuelo (directo|con (\d+) escalas?) de (.+?)\.(?: |$)")
+GF_DEPARTURE = re.compile(r"Sale de .+? a las (\d{1,2}):(\d{2})")
+GF_DEFAULT_SEATS = 9   # Google Flights no publica cupos: se asume un inventario para simular reservas
+
+
+def parse_google_flights(html_text: str, origin: str, destination: str, date) -> list[dict]:
+    """Extrae los vuelos de una página de resultados de Google Flights (deduplicados)."""
+    soup = BeautifulSoup(html_text, "html.parser")
+    rows = {}
+    for el in soup.select("[aria-label]"):
+        label = clean_text(el["aria-label"]) or ""
+        if "pesos colombianos" not in label or "Sale de" not in label:
+            continue
+        price, airline, departure = GF_PRICE.search(label), GF_AIRLINE.search(label), GF_DEPARTURE.search(label)
+        if not (price and airline and departure):
+            continue
+        stops = 0 if airline.group(1) == "directo" else int(airline.group(2))
+        name = airline.group(3).strip() + ("" if stops == 0 else f" · {stops} escala{'s' if stops > 1 else ''}")
+        hour, minute = int(departure.group(1)), int(departure.group(2))
+        depart_at = datetime(date.year, date.month, date.day, hour, minute, tzinfo=COLOMBIA_TZ)
+        key = f"gf-{slug(origin)}-{slug(destination)}-{date:%Y%m%d}-{slug(name)}-{hour:02d}{minute:02d}"
+        rows[key] = {
+            "source_id": key,
+            "origin": origin,
+            "destination": destination,
+            "airline": name,
+            "depart_at": depart_at,
+            "price": parse_price(price.group(1)),
+            "seats": GF_DEFAULT_SEATS,
+        }
+    return list(rows.values())
+
+
+def slug(text: str) -> str:
+    return "".join(ch for ch in text.upper() if ch.isalnum())
 
 
 PARSERS = {"flights": parse_flights, "hotels": parse_hotels, "cars": parse_cars}

@@ -30,7 +30,8 @@ flowchart LR
   FL & HO & CA & OR --> DB
   ING[ingestion<br/>Prefect flow] -->|DaskTaskRunner| DS[dask-scheduler]
   DS --> W[dask-worker x2]
-  W -->|scraping| MS[mock-source]
+  W -->|"vuelos reales"| GF[Google Flights]
+  W -->|"hoteles y autos"| MS[mock-source]
   W -->|upsert| DB
   ING -.-> PS[prefect-server<br/>UI :4200]
 ```
@@ -83,7 +84,7 @@ docker compose ps            # 14 contenedores en estado Up
 | http://localhost:3000/graphql | **GraphiQL**: consola del API Gateway |
 | http://localhost:4200 | **Prefect UI**: la ingesta (`ingesta-turistica`) y cada reserva SAGA (`saga-reserva-paquete`), con tareas, reintentos y logs |
 | http://localhost:8788/status | **Dask dashboard**: tareas distribuidas en los workers |
-| http://localhost:8080 | **Fuente mock**: el portal de viajes que se scrapea |
+| http://localhost:8080 | **Fuente mock**: el portal simulado de hoteles y autos (y respaldo de vuelos) |
 
 > Por diseño, los microservicios internos (`flights`, `hotels`, `cars`, `orders`), el `gateway`, la base de datos y
 > Redis **no publican puertos**. Solo se llega a ellos a través del frontend o el gateway.
@@ -105,7 +106,7 @@ WanderSync/
 │   └── orders/                 # órdenes, facturación y ORQUESTADOR SAGA
 ├── gateway/                    # API Gateway GraphQL + seguridad (sesiones, Argon2id, rate limit)
 ├── ingestion/                  # flow de Prefect + tareas en Dask (scraping, limpieza, upsert)
-├── mock-source/                # portal de viajes simulado (HTML, fallos 503/429, datos sucios)
+├── mock-source/                # portal simulado de hoteles y autos (HTML, fallos 503/429, datos sucios)
 ├── frontend/                   # SPA + nginx (proxy /graphql, CSP)
 ├── scripts/                    # auditoría de dependencias (pip-audit)
 └── docs/                       # documento técnico, guion de demo, esquema y reportes de seguridad

@@ -33,7 +33,7 @@ problemas críticos:
 |---|---|---|
 | **Reservas huérfanas**: el cliente pagaba y el vuelo quedaba reservado, pero el hotel o el auto fallaban y nadie deshacía lo anterior | Transacción distribuida sin coordinación ni rollback | **Patrón SAGA por orquestación**, con compensaciones automáticas, idempotencia y recuperación al arrancar |
 | **Cuellos de botella** al sincronizar tarifas masivamente | Sincronización síncrona contra la capa de persistencia | **Ingesta asíncrona y distribuida en Dask**, orquestada por **Prefect**, desacoplada de los servicios transaccionales |
-| Dependencia de APIs comerciales cerradas y costosas | — | **Scraping** de una fuente pública (simulada con `mock-source`) |
+| Dependencia de APIs comerciales cerradas y costosas | — | **Scraping de Google Flights** (vuelos reales) y de un portal simulado para hoteles y autos |
 
 ## 2. Vista general de la arquitectura
 
@@ -49,7 +49,8 @@ flowchart TB
   OR -->|"saga_log · payments"| DB
   ING["ingestion<br/>flow de Prefect"] -->|"DaskTaskRunner"| DS["dask-scheduler"]
   DS --> W["dask-worker ×2"]
-  W -->|"scraping HTTP"| MS["mock-source :8080<br/>portal a scrapear"]
+  W -->|"scraping vuelos reales"| GF["Google Flights<br/>(internet)"]
+  W -->|"scraping hoteles y autos"| MS["mock-source :8080<br/>portal simulado"]
   W -->|"upsert · rol ingestion_writer"| DB
   ING -.->|"estados y logs"| PS["prefect-server<br/>UI :4200"]
   W -.-> PS
@@ -59,7 +60,7 @@ flowchart TB
   classDef ingest fill:#eef2ff,stroke:#4338ca,color:#1e1b4b
   class FE,GW,OR,INV tx
   class DB,R data
-  class ING,DS,W,PS,MS ingest
+  class ING,DS,W,PS,MS,GF ingest
 ```
 
 *Verde: ruta transaccional (frontend → gateway → SAGA). Naranja: datos. Azul: ingesta distribuida y
@@ -84,7 +85,7 @@ observabilidad. Solo el frontend, Prefect, el dashboard de Dask y la fuente mock
 | `flights` / `hotels` / `cars` | FastAPI | Inventario: reservar (transacción local) y cancelar (compensación) | — |
 | `db` | Supabase Postgres 15 | Persistencia; `pg_graphql` expone el catálogo como GraphQL | — |
 | `redis` | Redis 7 (con contraseña) | Sesiones del lado del servidor y contadores de rate limiting | — |
-| `mock-source` | FastAPI | Portal de viajes simulado: HTML paginado, latencia, fallos 503/429, datos sucios | 8080 |
+| `mock-source` | FastAPI | Portal simulado para **hoteles y autos** (y respaldo de vuelos): HTML paginado, latencia, fallos 503/429, datos sucios | 8080 |
 | `prefect-server` | Prefect 3 | API y UI de orquestación y observabilidad | **4200** |
 | `dask-scheduler` | Dask distributed | Coordina las tareas del clúster; expone el dashboard | **8788** |
 | `dask-worker` ×2 | Dask distributed | Ejecutan scraping, limpieza, upsert y agregaciones | — |
@@ -377,10 +378,39 @@ query($f_destination: String, $f_seats: Int) {
 
 ## 7. Ingesta distribuida: Dask + Prefect
 
-### 7.1 Fuente de datos
+### 7.1 Fuentes de datos
 
-Cada grupo podía elegir libremente la fuente. Se construyó `mock-source`, un portal simulado que reproduce los
-problemas reales de scrapear un sitio público:
+| Datos | Fuente | Tipo |
+|---|---|---|
+| **Vuelos** | **Google Flights** (`google.com/travel/flights`) | **Real**: precios, aerolíneas y horarios en pesos colombianos |
+| **Hoteles y autos** | `mock-source` | Simulada |
+| Vuelos (**respaldo**) | `mock-source` | Simulada: se usa automáticamente en una ruta si Google no responde |
+
+**Google Flights.** Por cada ruta se consulta
+`https://www.google.com/travel/flights?q=Flights to CTG from BOG on <fecha> oneway&hl=es&gl=co&curr=COP` (fecha de
+viaje = hoy + 14 días). Google entrega los resultados renderizados en el servidor: cada vuelo trae un atributo
+`aria-label` con una frase completa, por ejemplo:
+
+> *"A partir de 184350 pesos colombianos. Vuelo directo de LATAM. Sale de Aeropuerto Internacional El Dorado el
+> sábado, octubre 24 a las 18:15. Llega a ... Duración total: 1 h 30 min."*
+
+`parse_google_flights` (en `ingestion/scraping.py`) extrae con expresiones regulares el precio, la aerolínea, las
+escalas y la hora de salida, y deduplica los vuelos (Google repite cada resultado en varias secciones). Como
+Google Flights no publica cupos, se asume un inventario de 9 asientos por vuelo para simular las reservas.
+
+- **Cortesía y bajo volumen:** 6 consultas por ejecución (una por ruta), con un retardo aleatorio de 0 a 3 s
+  entre ellas. Es un uso académico de bajo volumen; se usa un User-Agent de navegador porque Google solo entrega
+  los resultados a navegadores reconocidos. **No se evade ningún CAPTCHA ni desafío.**
+- **Detección de bloqueo:** si Google redirige a `/sorry/` o `unsupported`, o no devuelve vuelos, la tarea falla y
+  Prefect la reintenta (`retries=2`, a los 10 s y 30 s). Si sigue fallando, esa ruta se scrapea de la fuente mock.
+- **Retiro de ofertas obsoletas:** al actualizar una ruta con datos reales, las ofertas de esa ruta que ya no
+  están en Google (de otras fechas, de la fuente mock o semilla) quedan sin cupos.
+
+**Booking.com (hoteles)** responde a las peticiones automatizadas con un **desafío anti-bots de AWS WAF**
+(HTTP 202, sin resultados). Resolverlo implicaría evadir su detección de bots, así que los hoteles y autos se
+toman de la fuente simulada.
+
+**`mock-source`** reproduce los problemas reales de scrapear un sitio público:
 
 | Característica de la fuente | Cómo la maneja el pipeline |
 |---|---|
@@ -398,18 +428,24 @@ problemas reales de scrapear un sitio público:
 flowchart LR
   subgraph Prefect["Flow de Prefect: ingesta-turistica (DaskTaskRunner)"]
     direction LR
-    S["scrape-page ×36<br/>retries=4 · backoff exponencial · jitter"]
-    C["parse-and-clean ×36"]
+    G["scrape-google-flights ×6<br/>retries=2 (10 s, 30 s)"]
+    S["scrape-page ×18<br/>retries=4 · backoff exponencial · jitter"]
+    C["parse-and-clean ×18"]
     U["upsert-offers ×3<br/>retries=2"]
     M["market-stats<br/>Dask Bag (foldby)"]
+    G --> U
+    G -. "si falla una ruta" .-> S
     S --> C --> U
     C --> M
+    G --> M
   end
+  G -. HTTPS .-> GF[(Google Flights)]
   S -. HTTP .-> MS[(mock-source)]
   U -. "ON CONFLICT (source_id) DO UPDATE" .-> DB[(Postgres)]
 ```
 
-- **36 páginas por ejecución**: 6 rutas de vuelo y 3 ciudades de hoteles y de autos, con 3 páginas cada una.
+- **Por ejecución:** 6 consultas a Google Flights (una por ruta) y 18 páginas de la fuente mock (3 ciudades ×
+  hoteles y autos × 3 páginas).
 - Todas las tareas se ejecutan en los **workers de Dask** mediante `DaskTaskRunner(address="tcp://dask-scheduler:8786")`.
 - `market-stats` usa **Dask Bag** (`foldby`) para calcular en paralelo el precio promedio por destino y tipo.
 - **Resiliencia:** una página que agota sus reintentos se omite sin tumbar la ingesta, y queda contada en
@@ -424,8 +460,8 @@ flowchart LR
 | **Prefect UI** (`:4200`) | Flow runs, grafo de tareas, estados `Retrying` / `AwaitingRetry`, número de intentos, logs (`Fuente respondió 503...`) y el resumen de la ingesta |
 | **Dask dashboard** (`:8788`) | *Task stream* por worker, progreso, uso de memoria y CPU |
 
-Medición real de una ejecución: 36 páginas, **0 fallidas tras reintentos**, 7 tareas que necesitaron entre 2 y 4
-intentos, y alrededor de 275 ofertas guardadas en unos 20 segundos.
+Medición real de una ejecución: **6 de 6 rutas obtenidas de Google Flights (101 vuelos reales)**, 18 páginas de
+la fuente mock con **0 fallidas tras reintentos**, y alrededor de 240 ofertas guardadas en unos 20 segundos.
 
 ## 8. Ciberseguridad por diseño
 
@@ -518,7 +554,7 @@ flowchart LR
 | D6 | **Gateway con Strawberry** sobre `pg_graphql` (y no exponer `pg_graphql` directo) | Exponer `pg_graphql` al frontend | El gateway agrega lo que la base no puede: la consulta compuesta `searchPackages`, autenticación, rate limiting y la orquestación de mutaciones |
 | D7 | **Un schema por servicio** en una instancia | Una instancia de Postgres por servicio | Mantiene la propiedad de los datos por servicio con un costo de recursos razonable para el entorno académico. Migrar a instancias separadas no cambia el código |
 | D8 | **Dask + Prefect (`DaskTaskRunner`)** | Celery, multiprocessing | Requisito del enunciado. Prefect aporta reintentos declarativos, programación y UI. Dask aporta ejecución distribuida y colecciones (Bag) para agregaciones |
-| D9 | **Fuente mock propia** | Scrapear Booking o Kayak | Los portales reales prohíben el scraping en sus términos y bloquean bots. La fuente mock reproduce sus dificultades (HTML, paginación, 503/429, datos sucios) de forma ética y determinista para la demo |
+| D9 | **Vuelos reales de Google Flights; hoteles y autos de una fuente mock** | Solo fuente mock; Booking.com para hoteles | Google Flights entrega los resultados en el HTML del servidor y permite demostrar scraping real. Booking.com bloquea con un desafío anti-bots (AWS WAF) que no se debe evadir. La fuente mock cubre hoteles y autos, y sirve de respaldo automático si Google bloquea, para que la demo nunca dependa de un tercero. Reproduce las dificultades (HTML, paginación, 503/429, datos sucios) de forma ética y determinista para la demo |
 | D10 | **Sesiones en Redis** (servidor) | JWT en el cliente | Permiten **invalidar y regenerar** el ID (requisito de Session Fixation) y cerrar sesión de verdad. Redis también sirve para el rate limiting |
 | D12 | **La SAGA como flow de Prefect, con modo directo de respaldo** | SAGA sin observabilidad externa, o ejecutarla mediante un deployment de Prefect | Da trazabilidad visual paso a paso (estados, reintentos y logs) en la misma herramienta que la ingesta, sin cola ni latencia de un deployment. El modo directo evita que una caída de Prefect impida reservar |
 | D11 | **nginx como proxy del frontend** | CORS entre orígenes | Un único origen: la cookie `SameSite=Strict` funciona, no hace falta CORS, y nginx fija la IP real para el rate limiting |
@@ -556,6 +592,16 @@ queda `COMPENSATED`.
 en los logs.
 
 ![SAGA en Prefect](img/07-prefect-saga-compensacion.png)
+
+**Vuelos reales de Google Flights en el frontend:** los paquetes combinan vuelos reales (Wingo, LATAM, JetSMART,
+con sus precios y horarios) con hoteles y autos de la fuente simulada.
+
+![Vuelos de Google Flights en el frontend](img/08-frontend-vuelos-google.png)
+
+**Prefect: tareas `google-flights`** ejecutándose en Dask junto al scraping de hoteles y autos. El log reporta
+"Google Flights Medellin -> Cartagena: 15 vuelos reales".
+
+![Prefect con Google Flights](img/09-prefect-google-flights.png)
 
 ## 12. Trazabilidad con la rúbrica
 
