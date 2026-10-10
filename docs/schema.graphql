@@ -73,6 +73,9 @@ type Order {
   total: Float
   createdAt: DateTime!
 
+  """Ejecución de esta SAGA en la UI de Prefect (solo al crear la orden)"""
+  prefectRunUrl: String
+
   """Bitácora de la SAGA (solo se consulta si el cliente la pide)"""
   steps: [SagaStep!]!
 }

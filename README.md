@@ -81,7 +81,7 @@ docker compose ps            # 14 contenedores en estado Up
 |---|---|
 | http://localhost:3000 | **Frontend** de WanderSync (crear cuenta, buscar, reservar) |
 | http://localhost:3000/graphql | **GraphiQL**: consola del API Gateway |
-| http://localhost:4200 | **Prefect UI**: flujos, tareas, reintentos y logs |
+| http://localhost:4200 | **Prefect UI**: la ingesta (`ingesta-turistica`) y cada reserva SAGA (`saga-reserva-paquete`), con tareas, reintentos y logs |
 | http://localhost:8788/status | **Dask dashboard**: tareas distribuidas en los workers |
 | http://localhost:8080 | **Fuente mock**: el portal de viajes que se scrapea |
 
@@ -130,6 +130,6 @@ WanderSync/
 |---|---|---|
 | Arquitectura y Dockerización | 15% | `docker compose up` levanta 14 contenedores; microservicios aislados sin puertos expuestos |
 | API Gateway GraphQL y Persistencia | 15% | `gateway/` + `pg_graphql`; `searchPackages` consolida en 1 consulta; logs prueban cero over-fetching |
-| Patrón SAGA | 25% | `services/orders/main.py`; happy path, compensación en orden inverso, recuperación de huérfanas |
+| Patrón SAGA | 25% | `services/orders/main.py`; happy path, compensación en orden inverso, recuperación de huérfanas; cada SAGA visible en Prefect |
 | Dask + Prefect | 25% | `ingestion/flow.py`; DaskTaskRunner, reintentos con backoff, deployment programado, UI de Prefect |
 | Ciberseguridad y Resiliencia | 20% | `gateway/security.py`; Argon2id, Session Fixation, rate limiting, reporte de `pip-audit` |

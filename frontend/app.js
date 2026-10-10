@@ -175,7 +175,7 @@ function renderPackages(packages) {
 const BOOK_MUTATION = `
   mutation ($input: BookPackageInput!) {
     bookPackage(input: $input) {
-      id status total
+      id status total prefectRunUrl
       steps { step action result detail at }
     }
   }`;
@@ -229,7 +229,11 @@ function renderSaga(order) {
       el("span", {}, ok
         ? `Reserva confirmada por ${money.format(order.total)}`
         : "La reserva falló y la SAGA deshizo automáticamente los pasos ya confirmados (sin reservas huérfanas)."),
-      el("code", { class: "muted" }, order.id)),
+      el("code", { class: "muted" }, order.id),
+      order.prefectRunUrl
+        ? el("a", { class: "prefect-link", href: order.prefectRunUrl, target: "_blank", rel: "noopener" },
+            "Ver esta SAGA en Prefect ↗")
+        : null),
     timeline(order.steps));
   $("#saga-panel").scrollIntoView({ behavior: "smooth", block: "start" });
 }

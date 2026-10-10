@@ -9,6 +9,7 @@ import json
 import shutil
 import subprocess
 import sys
+import tempfile
 from datetime import date
 from pathlib import Path
 
@@ -119,15 +120,22 @@ def main() -> None:
             .replace("__DATE__", f"{MONTHS[today.month - 1].capitalize()} de {today.year}")
             .replace("__MARKDOWN__", json.dumps(markdown)))
     TEMP_HTML.write_text(html, encoding="utf-8")
+    # Perfil aislado: si el navegador ya está abierto, no le delega el trabajo a esa ventana
+    profile = Path(tempfile.mkdtemp(prefix="wandersync-pdf-"))
+    before = OUTPUT.stat().st_mtime if OUTPUT.exists() else 0
     try:
         subprocess.run([
             find_browser(), "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+            f"--user-data-dir={profile}",
             "--virtual-time-budget=30000", "--run-all-compositor-stages-before-draw",
             f"--print-to-pdf={OUTPUT}", TEMP_HTML.as_uri(),
         ], check=True, timeout=180)
     finally:
         if "--keep-html" not in sys.argv:
             TEMP_HTML.unlink(missing_ok=True)
+        shutil.rmtree(profile, ignore_errors=True)
+    if not OUTPUT.exists() or OUTPUT.stat().st_mtime == before:
+        sys.exit("El navegador no generó el PDF. En Windows ejecútalo desde PowerShell o CMD (no desde Git Bash).")
     print(f"PDF generado: {OUTPUT.relative_to(ROOT)} ({OUTPUT.stat().st_size // 1024} KB)")
 
 

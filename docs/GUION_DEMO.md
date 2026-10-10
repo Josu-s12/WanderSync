@@ -102,7 +102,11 @@ Muestra el diagrama de [ARQUITECTURA.md](ARQUITECTURA.md#2-vista-general-de-la-a
    ```
    > "El auto falló y el orquestador deshizo automáticamente el hotel y el vuelo **en orden inverso**. No quedan
    > reservas huérfanas, que era el problema original de WanderSync."
-3. *(Opcional)* Repite con **Pago**: se compensan las 3 reservas.
+3. Clic en **"Ver esta SAGA en Prefect ↗"**. Se abre el flow `saga-xxxxxxxx-fallo-auto` con estado **Compensated**:
+   > "Cada paso de la SAGA es una tarea de Prefect. `reservar-CAR` está en rojo y las compensaciones en verde. Si
+   > una compensación fallara, Prefect la reintentaría hasta 3 veces, y aquí se verían esos reintentos."
+   - En **Flows** de Prefect se ven los dos flujos del sistema: `ingesta-turistica` y `saga-reserva-paquete`.
+4. *(Opcional)* Repite con **Pago**: se compensan las 3 reservas.
 
 ### 4.3 Fallo real (no simulado)
 ```powershell
@@ -137,7 +141,9 @@ docker compose exec db psql -U postgres -d wandersync -P pager=off -c "select o.
 ## Preguntas frecuentes del jurado
 
 - **¿Por qué orquestación y no coreografía?** Ver D2 en [ARQUITECTURA.md](ARQUITECTURA.md#10-decisiones-de-arquitectura-y-justificación).
-- **¿Qué pasa si falla una compensación?** Se reintenta 3 veces con backoff. Si aun así falla, la orden queda
+- **¿Y si se cae Prefect?** Las reservas siguen funcionando: el servicio `orders` detecta que Prefect no responde y
+  ejecuta la misma SAGA en modo directo. Prefect aporta observabilidad, no es un punto único de falla.
+- **¿Qué pasa si falla una compensación?** Se reintenta hasta 3 veces con backoff. Si aun así falla, la orden queda
   `COMPENSATION_PENDING` y la recuperación automática la vuelve a intentar.
 - **¿Qué pasa si reintentan la misma reserva?** Los endpoints son idempotentes por `order_id`, así que no se duplica.
 - **¿Por qué una fuente mock?** Los portales reales prohíben el scraping y bloquean bots. La mock reproduce sus

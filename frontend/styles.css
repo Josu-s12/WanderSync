@@ -90,6 +90,11 @@ input:focus, select:focus { outline: 2px solid var(--primary); outline-offset: 1
 .status.COMPENSATED, .status.COMPENSATION_PENDING { background: var(--comp-bg); color: var(--comp); }
 .status.PENDING { background: var(--bg); color: var(--muted); }
 .saga-summary { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.prefect-link {
+  margin-left: auto; font-size: .85rem; font-weight: 600; color: var(--primary);
+  border: 1px solid var(--border); border-radius: 8px; padding: .35rem .7rem; text-decoration: none;
+}
+.prefect-link:hover { background: var(--bg); }
 .timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: .5rem; }
 .timeline li {
   display: grid; grid-template-columns: 28px 90px 110px 1fr; gap: .75rem; align-items: center;

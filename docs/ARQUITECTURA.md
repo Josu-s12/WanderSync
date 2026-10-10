@@ -80,7 +80,7 @@ observabilidad. Solo el frontend, Prefect, el dashboard de Dask y la fuente mock
 |---|---|---|---|
 | `frontend` | nginx-unprivileged | Sirve la SPA, hace de proxy de `/graphql` al gateway y aplica CSP y headers | **3000** |
 | `gateway` | FastAPI + Strawberry | API GraphQL unificada, autenticación, sesiones y rate limiting | — |
-| `orders` | FastAPI + httpx | Órdenes, facturación (`payments`) y **orquestador SAGA** | — |
+| `orders` | FastAPI + httpx + Prefect | Órdenes, facturación (`payments`) y **orquestador SAGA**; cada SAGA se registra como un flow de Prefect | — |
 | `flights` / `hotels` / `cars` | FastAPI | Inventario: reservar (transacción local) y cancelar (compensación) | — |
 | `db` | Supabase Postgres 15 | Persistencia; `pg_graphql` expone el catálogo como GraphQL | — |
 | `redis` | Redis 7 (con contraseña) | Sesiones del lado del servidor y contadores de rate limiting | — |
@@ -274,7 +274,7 @@ sequenceDiagram
   O->>A: POST /bookings
   A--xO: 503 / 409 / error de red
   O->>L: CAR · EXECUTE · FAILED
-  Note over O: Compensación en ORDEN INVERSO,<br/>con reintentos y backoff (1s, 2s, 3s)
+  Note over O: Compensación en ORDEN INVERSO,<br/>con hasta 3 reintentos y backoff (1 s, 2 s, 3 s)
   O->>H: POST /bookings/{id}/cancel
   H-->>O: 200 CANCELLED (cupo devuelto)
   O->>L: HOTEL · COMPENSATE · OK
@@ -292,7 +292,7 @@ sequenceDiagram
 |---|---|---|
 | **Compensación en orden inverso** | `compensate()` recorre `reversed(completed)` | Estados intermedios inconsistentes |
 | **Idempotencia** | `POST /bookings` devuelve la reserva existente para el mismo `order_id`; `cancel` sobre una reserva ya cancelada no hace nada | Dobles reservas o dobles devoluciones al reintentar |
-| **Reintentos con backoff en compensaciones** | 3 intentos (1s, 2s, 3s); si se agotan, la orden queda `COMPENSATION_PENDING` | Compensaciones perdidas por fallos transitorios |
+| **Reintentos con backoff en compensaciones** | Hasta 3 reintentos (1 s, 2 s, 3 s), como `retries` de la tarea de Prefect `compensar`; si se agotan, la orden queda `COMPENSATION_PENDING` | Compensaciones perdidas por fallos transitorios |
 | **Bitácora persistente** | `saga_log` en *autocommit* (cada paso se guarda al instante) | Perder el rastro de qué se ejecutó |
 | **Recuperación de huérfanas** | Al arrancar `orders` (y en `POST /orders/recover`) se compensan las órdenes `PENDING` o `COMPENSATION_PENDING` usando el `saga_log` | **Reservas huérfanas** si el orquestador se cae a mitad de una SAGA |
 | **Descuento atómico de cupos** | `UPDATE ... SET cupos = cupos - 1 WHERE id = ? AND cupos > 0 RETURNING` | Sobreventa en concurrencia |
@@ -300,6 +300,29 @@ sequenceDiagram
 **Escenarios demostrables:** `simulateFailureAt` = `FLIGHT` | `HOTEL` | `CAR` | `PAYMENT`, una caída real de un
 servicio (`docker compose stop cars`) o falta de cupos (HTTP 409). En todos los casos el inventario queda igual
 que antes de la orden fallida.
+
+### 5.5 Observabilidad de la SAGA en Prefect
+
+Cada reserva se ejecuta como un **flow de Prefect** (`saga-reserva-paquete`) dentro del propio servicio `orders`.
+Cada paso es una **tarea** visible en la UI:
+
+| Tarea | Qué representa | Política |
+|---|---|---|
+| `reservar-FLIGHT` · `reservar-HOTEL` · `reservar-CAR` | Transacciones locales | Sin reintento: un fallo dispara la compensación |
+| `cobrar-pago` | Transacción pivote (facturación) | Sin reintento |
+| `compensar-HOTEL` · `compensar-FLIGHT` · ... | Transacciones de compensación (orden inverso) | `retries=3`, `retry_delay_seconds=[1, 2, 3]` |
+
+- Nombre de la ejecución según el escenario: `saga-<orden>-happy-path`, `saga-<orden>-fallo-auto`, etc.
+- **Estado final:** `Completed` si la reserva se confirmó, **`Compensated`** (estado personalizado de tipo
+  *completado*) si falló un paso y se compensó, y `CompensationPending` (tipo *fallido*) si una compensación agotó
+  sus reintentos.
+- En el grafo, la tarea que falló aparece en **rojo** y las compensaciones en **verde**. Los logs del logger `saga`
+  (la misma bitácora del `saga_log`) también llegan a Prefect.
+- El frontend muestra el enlace **"Ver esta SAGA en Prefect"** en el resultado de cada reserva.
+- **Prefect no es un punto único de falla:** antes de cada SAGA se verifica `GET /api/health` (con caché de
+  15 s). Si Prefect no responde, la **misma lógica** se ejecuta en modo directo, con los reintentos implementados
+  en el código. Si Prefect falla a mitad de una SAGA, la orden se recupera con el `saga_log`. Las reservas nunca
+  dependen de Prefect.
 
 ## 6. API Gateway GraphQL
 
@@ -497,6 +520,7 @@ flowchart LR
 | D8 | **Dask + Prefect (`DaskTaskRunner`)** | Celery, multiprocessing | Requisito del enunciado. Prefect aporta reintentos declarativos, programación y UI. Dask aporta ejecución distribuida y colecciones (Bag) para agregaciones |
 | D9 | **Fuente mock propia** | Scrapear Booking o Kayak | Los portales reales prohíben el scraping en sus términos y bloquean bots. La fuente mock reproduce sus dificultades (HTML, paginación, 503/429, datos sucios) de forma ética y determinista para la demo |
 | D10 | **Sesiones en Redis** (servidor) | JWT en el cliente | Permiten **invalidar y regenerar** el ID (requisito de Session Fixation) y cerrar sesión de verdad. Redis también sirve para el rate limiting |
+| D12 | **La SAGA como flow de Prefect, con modo directo de respaldo** | SAGA sin observabilidad externa, o ejecutarla mediante un deployment de Prefect | Da trazabilidad visual paso a paso (estados, reintentos y logs) en la misma herramienta que la ingesta, sin cola ni latencia de un deployment. El modo directo evita que una caída de Prefect impida reservar |
 | D11 | **nginx como proxy del frontend** | CORS entre orígenes | Un único origen: la cookie `SameSite=Strict` funciona, no hace falta CORS, y nginx fija la IP real para el rate limiting |
 
 ## 11. Evidencias de funcionamiento
@@ -527,12 +551,18 @@ queda `COMPENSATED`.
 
 ![Dask task stream](img/05-dask-task-stream.jpg)
 
+**SAGA en Prefect:** la reserva con fallo en el auto quedó como un flow con estado **Compensated**.
+`reservar-CAR` aparece en rojo y `compensar-HOTEL` y `compensar-FLIGHT` en verde, con la bitácora de la SAGA
+en los logs.
+
+![SAGA en Prefect](img/07-prefect-saga-compensacion.png)
+
 ## 12. Trazabilidad con la rúbrica
 
 | Criterio (peso) | Nivel Excelente exigido | Cómo se cumple |
 |---|---|---|
 | Arquitectura y Dockerización (15%) | Despliegue con `docker compose up`, microservicios aislados | 14 contenedores con un comando, healthchecks, red interna sin puertos expuestos, Dockerfile por servicio, imágenes sin root |
 | API Gateway GraphQL y Persistencia (15%) | Gateway funcional, sin over-fetching, integración con BD | Gateway Strawberry, `pg_graphql` de Supabase, selección de campos propagada a la BD, consulta compuesta en una sola llamada |
-| Patrón SAGA (25%) | Happy path y compensaciones automáticas impecables | Orquestador con 4 pasos, compensación inversa, idempotencia, reintentos, `saga_log`, recuperación de huérfanas y 5 escenarios de fallo demostrables |
-| Dask + Prefect (25%) | Workers de Dask integrados con Prefect, retries y dashboard | `DaskTaskRunner`, 2 workers, reintentos con backoff y jitter, deployment programado, UI de Prefect y dashboard de Dask |
+| Patrón SAGA (25%) | Happy path y compensaciones automáticas impecables | Orquestador con 4 pasos, compensación inversa, idempotencia, reintentos, `saga_log`, recuperación de huérfanas, cada SAGA visible en Prefect y 5 escenarios de fallo demostrables |
+| Dask + Prefect (25%) | Workers de Dask integrados con Prefect, retries y dashboard | 2 flows en Prefect (`ingesta-turistica` y `saga-reserva-paquete`), `DaskTaskRunner`, 2 workers, reintentos con backoff y jitter, deployment programado, UI de Prefect y dashboard de Dask |
 | Ciberseguridad y Resiliencia (20%) | Session Fixation, Argon2id/bcrypt, Rate Limiting, audit | Regeneración y rechazo de IDs, Argon2id, rate limiting en login, registro, checkout y global, reporte `pip-audit` con control positivo, mínimo privilegio |

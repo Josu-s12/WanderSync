@@ -6,6 +6,7 @@
 services:
 
   db:
+    restart: unless-stopped
     image: supabase/postgres:15.8.1.060
     container_name: ws-db
     environment:
@@ -21,6 +22,7 @@ services:
       retries: 20
 
   redis:
+    restart: unless-stopped
     image: redis:7-alpine
     container_name: ws-redis
     command: redis-server --requirepass ${REDIS_PASSWORD:-wandersync_dev_redis}
@@ -32,6 +34,7 @@ services:
       retries: 10
 
   flights:
+    restart: unless-stopped
     build: ./services/flights
     container_name: ws-flights
     environment:
@@ -41,6 +44,7 @@ services:
         condition: service_healthy
 
   hotels:
+    restart: unless-stopped
     build: ./services/hotels
     container_name: ws-hotels
     environment:
@@ -50,6 +54,7 @@ services:
         condition: service_healthy
 
   cars:
+    restart: unless-stopped
     build: ./services/cars
     container_name: ws-cars
     environment:
@@ -59,6 +64,7 @@ services:
         condition: service_healthy
 
   orders:
+    restart: unless-stopped
     build: ./services/orders
     container_name: ws-orders
     environment:
@@ -66,6 +72,12 @@ services:
       FLIGHTS_URL: http://flights:8000
       HOTELS_URL: http://hotels:8000
       CARS_URL: http://cars:8000
+      # Observabilidad de la SAGA en Prefect (si Prefect no responde, la SAGA corre igual en modo directo)
+      SAGA_PREFECT: "true"
+      PREFECT_API_URL: http://prefect-server:4200/api
+      PREFECT_UI_URL: http://localhost:4200
+      PREFECT_LOGGING_EXTRA_LOGGERS: saga
+      PREFECT_LOGGING_TO_API_WHEN_MISSING_FLOW: ignore
     depends_on:
       db:
         condition: service_healthy
@@ -77,6 +89,7 @@ services:
         condition: service_started
 
   gateway:
+    restart: unless-stopped
     build: ./gateway
     container_name: ws-gateway
     environment:
@@ -96,6 +109,7 @@ services:
         condition: service_started
 
   frontend:
+    restart: unless-stopped
     build: ./frontend
     container_name: ws-frontend
     ports:
@@ -105,6 +119,7 @@ services:
         condition: service_started
 
   mock-source:
+    restart: unless-stopped
     build: ./mock-source
     container_name: ws-mock-source
     environment:
@@ -116,6 +131,7 @@ services:
 
   # ---------------- Orquestación y observabilidad ----------------
   prefect-server:
+    restart: unless-stopped
     image: prefecthq/prefect:3.8.8-python3.12
     container_name: ws-prefect
     command: prefect server start --host 0.0.0.0 --port 4200
@@ -133,6 +149,7 @@ services:
 
   # ---------------- Computación distribuida ----------------
   dask-scheduler:
+    restart: unless-stopped
     build: ./ingestion
     image: wandersync-ingestion
     container_name: ws-dask-scheduler
@@ -141,6 +158,7 @@ services:
       - "8788:8787"   # dashboard de Dask en http://localhost:8788
 
   dask-worker:
+    restart: unless-stopped
     build: ./ingestion
     image: wandersync-ingestion
     command: dask worker tcp://dask-scheduler:8786 --nthreads 2
@@ -158,6 +176,7 @@ services:
         condition: service_healthy
 
   ingestion:
+    restart: unless-stopped
     build: ./ingestion
     image: wandersync-ingestion
     container_name: ws-ingestion

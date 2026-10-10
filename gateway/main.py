@@ -178,6 +178,8 @@ class Order:
     status: str
     total: float | None
     created_at: datetime
+    prefect_run_url: str | None = strawberry.field(
+        default=None, description="Ejecución de esta SAGA en la UI de Prefect (solo al crear la orden)")
     _steps: strawberry.Private[list | None] = None
 
     @strawberry.field(description="Bitácora de la SAGA (solo se consulta si el cliente la pide)")
@@ -201,7 +203,8 @@ def parse(cls, row: dict):
 
 def to_order(o: dict) -> Order:
     return Order(id=o["id"], status=o["status"], total=o["total"],
-                 created_at=datetime.fromisoformat(o["created_at"]), _steps=o.get("steps"))
+                 created_at=datetime.fromisoformat(o["created_at"]), _steps=o.get("steps"),
+                 prefect_run_url=o.get("prefect_flow_run_url"))
 
 
 @strawberry.type
